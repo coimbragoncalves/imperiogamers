@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import CommentSection from '@/components/articles/CommentSection';
 import ReactionButtons from '@/components/articles/ReactionButtons';
+import ShareButtons from '@/components/articles/ShareButtons';
 
 interface TrailerData {
   id: string;
@@ -88,11 +89,30 @@ const Trailer = () => {
 
   const embedUrl = trailer.youtube_url ? getYouTubeEmbedUrl(trailer.youtube_url) : null;
 
+  const siteUrl = window.location.origin;
+  const trailerUrl = `${siteUrl}/trailer/${trailer.slug}`;
+  const ogImage = trailer.cover_image || `${siteUrl}/placeholder.svg`;
+
   return (
     <>
       <Helmet>
         <title>{trailer.title} - Império Gamers</title>
         <meta name="description" content={trailer.description || trailer.title} />
+        
+        {/* Open Graph / Facebook */}
+        <meta property="og:type" content="video.other" />
+        <meta property="og:url" content={trailerUrl} />
+        <meta property="og:title" content={trailer.title} />
+        <meta property="og:description" content={trailer.description || trailer.title} />
+        <meta property="og:image" content={ogImage} />
+        <meta property="og:site_name" content="Império Gamers" />
+        
+        {/* Twitter */}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:url" content={trailerUrl} />
+        <meta name="twitter:title" content={trailer.title} />
+        <meta name="twitter:description" content={trailer.description || trailer.title} />
+        <meta name="twitter:image" content={ogImage} />
       </Helmet>
       <Layout>
         <article className="container mx-auto px-4 py-12 max-w-4xl">
@@ -110,15 +130,23 @@ const Trailer = () => {
           </h1>
 
           {/* Meta */}
-          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-6">
-            <span className="flex items-center gap-1">
-              <Calendar className="h-4 w-4" />
-              {formatDistanceToNow(new Date(trailer.created_at), { addSuffix: true, locale: ptBR })}
-            </span>
-            <span className="flex items-center gap-1">
-              <Eye className="h-4 w-4" />
-              {trailer.views} visualizações
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Calendar className="h-4 w-4" />
+                {formatDistanceToNow(new Date(trailer.created_at), { addSuffix: true, locale: ptBR })}
+              </span>
+              <span className="flex items-center gap-1">
+                <Eye className="h-4 w-4" />
+                {trailer.views} visualizações
+              </span>
+            </div>
+            <ShareButtons 
+              title={trailer.title} 
+              description={trailer.description || undefined}
+              slug={trailer.slug}
+              contentType="trailer"
+            />
           </div>
 
           {/* Video */}
