@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, Eye, ThumbsUp, ThumbsDown, Calendar, User } from 'lucide-react';
+import { ArrowLeft, Eye, Calendar } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import CommentSection from '@/components/articles/CommentSection';
 import ReactionButtons from '@/components/articles/ReactionButtons';
+import ShareButtons from '@/components/articles/ShareButtons';
 
 interface ArticleData {
   id: string;
@@ -83,11 +84,30 @@ const Article = () => {
     );
   }
 
+  const siteUrl = window.location.origin;
+  const articleUrl = `${siteUrl}/artigo/${article.slug}`;
+  const ogImage = article.cover_image || `${siteUrl}/placeholder.svg`;
+
   return (
     <>
       <Helmet>
         <title>{article.title} - Império Gamers</title>
         <meta name="description" content={article.description || article.title} />
+        
+        {/* Open Graph / Facebook */}
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content={articleUrl} />
+        <meta property="og:title" content={article.title} />
+        <meta property="og:description" content={article.description || article.title} />
+        <meta property="og:image" content={ogImage} />
+        <meta property="og:site_name" content="Império Gamers" />
+        
+        {/* Twitter */}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:url" content={articleUrl} />
+        <meta name="twitter:title" content={article.title} />
+        <meta name="twitter:description" content={article.description || article.title} />
+        <meta name="twitter:image" content={ogImage} />
       </Helmet>
       <Layout>
         <article className="container mx-auto px-4 py-12 max-w-4xl">
@@ -105,15 +125,23 @@ const Article = () => {
           </h1>
 
           {/* Meta */}
-          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-6">
-            <span className="flex items-center gap-1">
-              <Calendar className="h-4 w-4" />
-              {formatDistanceToNow(new Date(article.created_at), { addSuffix: true, locale: ptBR })}
-            </span>
-            <span className="flex items-center gap-1">
-              <Eye className="h-4 w-4" />
-              {article.views} visualizações
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Calendar className="h-4 w-4" />
+                {formatDistanceToNow(new Date(article.created_at), { addSuffix: true, locale: ptBR })}
+              </span>
+              <span className="flex items-center gap-1">
+                <Eye className="h-4 w-4" />
+                {article.views} visualizações
+              </span>
+            </div>
+            <ShareButtons 
+              title={article.title} 
+              description={article.description || undefined}
+              slug={article.slug}
+              contentType={article.content_type}
+            />
           </div>
 
           {/* Cover Image */}
