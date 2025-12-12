@@ -52,41 +52,45 @@ const ReactionButtons = ({ articleId, likes, dislikes }: ReactionButtonsProps) =
     mutationFn: async (reactionType: 'like' | 'dislike') => {
       // Handle guest reactions with localStorage only
       if (!user) {
-        const wasLike = guestReaction === 'like';
-        const wasDislike = guestReaction === 'dislike';
-        
         if (guestReaction === reactionType) {
           // Remove reaction
           localStorage.removeItem(guestReactionsKey);
           setGuestReaction(null);
           
-          // Update counts
-          if (reactionType === 'like') {
-            await supabase.from('articles').update({ likes: Math.max(0, likes - 1) }).eq('id', articleId);
-          } else {
-            await supabase.from('articles').update({ dislikes: Math.max(0, dislikes - 1) }).eq('id', articleId);
-          }
+          // Update counts via RPC function
+          const likeDelta = reactionType === 'like' ? -1 : 0;
+          const dislikeDelta = reactionType === 'dislike' ? -1 : 0;
+          await supabase.rpc('update_reaction_counts', {
+            p_article_id: articleId,
+            p_like_delta: likeDelta,
+            p_dislike_delta: dislikeDelta
+          });
           return null;
         }
         
         // Set or change reaction
         localStorage.setItem(guestReactionsKey, reactionType);
+        const previousReaction = guestReaction;
         setGuestReaction(reactionType);
         
-        if (guestReaction) {
+        if (previousReaction) {
           // Changing reaction
-          if (reactionType === 'like') {
-            await supabase.from('articles').update({ likes: likes + 1, dislikes: Math.max(0, dislikes - 1) }).eq('id', articleId);
-          } else {
-            await supabase.from('articles').update({ likes: Math.max(0, likes - 1), dislikes: dislikes + 1 }).eq('id', articleId);
-          }
+          const likeDelta = reactionType === 'like' ? 1 : -1;
+          const dislikeDelta = reactionType === 'dislike' ? 1 : -1;
+          await supabase.rpc('update_reaction_counts', {
+            p_article_id: articleId,
+            p_like_delta: likeDelta,
+            p_dislike_delta: dislikeDelta
+          });
         } else {
           // New reaction
-          if (reactionType === 'like') {
-            await supabase.from('articles').update({ likes: likes + 1 }).eq('id', articleId);
-          } else {
-            await supabase.from('articles').update({ dislikes: dislikes + 1 }).eq('id', articleId);
-          }
+          const likeDelta = reactionType === 'like' ? 1 : 0;
+          const dislikeDelta = reactionType === 'dislike' ? 1 : 0;
+          await supabase.rpc('update_reaction_counts', {
+            p_article_id: articleId,
+            p_like_delta: likeDelta,
+            p_dislike_delta: dislikeDelta
+          });
         }
         return reactionType;
       }
@@ -99,11 +103,13 @@ const ReactionButtons = ({ articleId, likes, dislikes }: ReactionButtonsProps) =
           .eq('article_id', articleId)
           .eq('user_id', user.id);
 
-        if (reactionType === 'like') {
-          await supabase.from('articles').update({ likes: Math.max(0, likes - 1) }).eq('id', articleId);
-        } else {
-          await supabase.from('articles').update({ dislikes: Math.max(0, dislikes - 1) }).eq('id', articleId);
-        }
+        const likeDelta = reactionType === 'like' ? -1 : 0;
+        const dislikeDelta = reactionType === 'dislike' ? -1 : 0;
+        await supabase.rpc('update_reaction_counts', {
+          p_article_id: articleId,
+          p_like_delta: likeDelta,
+          p_dislike_delta: dislikeDelta
+        });
         return null;
       }
 
@@ -114,11 +120,13 @@ const ReactionButtons = ({ articleId, likes, dislikes }: ReactionButtonsProps) =
           .eq('article_id', articleId)
           .eq('user_id', user.id);
 
-        if (reactionType === 'like') {
-          await supabase.from('articles').update({ likes: likes + 1, dislikes: Math.max(0, dislikes - 1) }).eq('id', articleId);
-        } else {
-          await supabase.from('articles').update({ likes: Math.max(0, likes - 1), dislikes: dislikes + 1 }).eq('id', articleId);
-        }
+        const likeDelta = reactionType === 'like' ? 1 : -1;
+        const dislikeDelta = reactionType === 'dislike' ? 1 : -1;
+        await supabase.rpc('update_reaction_counts', {
+          p_article_id: articleId,
+          p_like_delta: likeDelta,
+          p_dislike_delta: dislikeDelta
+        });
         return reactionType;
       }
 
@@ -128,11 +136,13 @@ const ReactionButtons = ({ articleId, likes, dislikes }: ReactionButtonsProps) =
         user_id: user.id,
       });
 
-      if (reactionType === 'like') {
-        await supabase.from('articles').update({ likes: likes + 1 }).eq('id', articleId);
-      } else {
-        await supabase.from('articles').update({ dislikes: dislikes + 1 }).eq('id', articleId);
-      }
+      const likeDelta = reactionType === 'like' ? 1 : 0;
+      const dislikeDelta = reactionType === 'dislike' ? 1 : 0;
+      await supabase.rpc('update_reaction_counts', {
+        p_article_id: articleId,
+        p_like_delta: likeDelta,
+        p_dislike_delta: dislikeDelta
+      });
       return reactionType;
     },
     onSuccess: () => {

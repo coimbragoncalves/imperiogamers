@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { 
@@ -8,7 +8,8 @@ import {
   Megaphone,
   Plus,
   Video,
-  Settings
+  Menu,
+  X
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
@@ -23,12 +24,18 @@ const Admin = () => {
   const { isAdmin, isLoading, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoading && (!user || !isAdmin)) {
       navigate('/auth');
     }
   }, [isLoading, user, isAdmin, navigate]);
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
 
   if (isLoading) {
     return (
@@ -57,14 +64,42 @@ const Admin = () => {
       <Helmet>
         <title>Admin - Império Gamers</title>
       </Helmet>
-      <div className="min-h-screen flex bg-background">
+      <div className="min-h-screen flex flex-col md:flex-row bg-background">
+        {/* Mobile Header */}
+        <header className="md:hidden flex items-center justify-between p-4 border-b border-border bg-card">
+          <Link to="/" className="text-xl font-display font-bold text-primary">
+            Império Gamers
+          </Link>
+          <Button 
+            variant="ghost" 
+            size="icon"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+          >
+            {sidebarOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </Button>
+        </header>
+
+        {/* Sidebar Overlay (Mobile) */}
+        {sidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
         {/* Sidebar */}
-        <aside className="w-64 bg-card border-r border-border p-4 flex flex-col">
-          <Link to="/" className="text-xl font-display font-bold text-primary mb-8">
+        <aside className={`
+          fixed md:static inset-y-0 left-0 z-50
+          w-64 bg-card border-r border-border p-4 flex flex-col
+          transform transition-transform duration-200 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0
+        `}>
+          <Link to="/" className="hidden md:block text-xl font-display font-bold text-primary mb-8">
             Império Gamers
           </Link>
 
-          <nav className="flex-1 space-y-1">
+          <nav className="flex-1 space-y-1 mt-4 md:mt-0">
             {navItems.map(({ icon: Icon, label, path }) => (
               <Link
                 key={path}
@@ -106,7 +141,7 @@ const Admin = () => {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-8 overflow-auto">
+        <main className="flex-1 p-4 md:p-8 overflow-auto">
           <Routes>
             <Route index element={<AdminDashboard />} />
             <Route path="artigos" element={<AdminArticles />} />

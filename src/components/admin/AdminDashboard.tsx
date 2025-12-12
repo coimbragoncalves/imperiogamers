@@ -32,23 +32,23 @@ const AdminDashboard = () => {
 
   return (
     <div>
-      <h1 className="text-3xl font-display font-bold mb-8">Dashboard</h1>
+      <h1 className="text-2xl md:text-3xl font-display font-bold mb-6 md:mb-8">Dashboard</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mb-6 md:mb-8">
         {statCards.map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="bg-card rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-muted-foreground text-sm">{label}</span>
-              <Icon className={`h-5 w-5 ${color}`} />
+          <div key={label} className="bg-card rounded-xl border border-border p-4 md:p-6">
+            <div className="flex items-center justify-between mb-2 md:mb-4">
+              <span className="text-muted-foreground text-xs md:text-sm">{label}</span>
+              <Icon className={`h-4 w-4 md:h-5 md:w-5 ${color}`} />
             </div>
-            <p className="text-3xl font-display font-bold">{value.toLocaleString()}</p>
+            <p className="text-xl md:text-3xl font-display font-bold">{value.toLocaleString()}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-card rounded-xl border border-border p-6">
-        <h2 className="text-xl font-display font-bold mb-4">Bem-vindo ao Painel Admin</h2>
-        <p className="text-muted-foreground">
+      <div className="bg-card rounded-xl border border-border p-4 md:p-6">
+        <h2 className="text-lg md:text-xl font-display font-bold mb-3 md:mb-4">Bem-vindo ao Painel Admin</h2>
+        <p className="text-sm md:text-base text-muted-foreground">
           Use o menu lateral para gerenciar artigos, trailers, comentários e anúncios do site.
         </p>
       </div>

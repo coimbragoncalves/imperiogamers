@@ -302,6 +302,14 @@ export type Database = {
         Returns: boolean
       }
       increment_views: { Args: { article_id: string }; Returns: undefined }
+      update_reaction_counts: {
+        Args: {
+          p_article_id: string
+          p_dislike_delta: number
+          p_like_delta: number
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "user"

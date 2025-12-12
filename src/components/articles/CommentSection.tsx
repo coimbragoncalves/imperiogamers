@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, User, MessageSquare } from 'lucide-react';
+import { Send, User, MessageSquare, Shield } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/hooks/use-toast';
 
@@ -18,6 +19,7 @@ interface Comment {
   created_at: string;
   parent_id: string | null;
   profiles?: { username: string | null } | null;
+  isAdmin?: boolean;
 }
 
 interface CommentSectionProps {
@@ -44,18 +46,31 @@ const CommentSection = ({ articleId }: CommentSectionProps) => {
 
       if (error) throw error;
       
-      // Fetch profiles for comments with user_id
+      // Fetch profiles and admin status for comments with user_id
       const commentsWithProfiles = await Promise.all(
         data.map(async (comment) => {
           if (comment.user_id) {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('username')
-              .eq('id', comment.user_id)
-              .single();
-            return { ...comment, profiles: profile };
+            const [profileResult, roleResult] = await Promise.all([
+              supabase
+                .from('profiles')
+                .select('username')
+                .eq('id', comment.user_id)
+                .single(),
+              supabase
+                .from('user_roles')
+                .select('role')
+                .eq('user_id', comment.user_id)
+                .eq('role', 'admin')
+                .maybeSingle()
+            ]);
+            
+            return { 
+              ...comment, 
+              profiles: profileResult.data,
+              isAdmin: !!roleResult.data
+            };
           }
-          return { ...comment, profiles: null };
+          return { ...comment, profiles: null, isAdmin: false };
         })
       );
       
@@ -115,15 +130,24 @@ const CommentSection = ({ articleId }: CommentSectionProps) => {
     const authorName = comment.profiles?.username || comment.guest_name || 'Anônimo';
 
     return (
-      <div className={`${depth > 0 ? 'ml-8 border-l border-border pl-4' : ''}`}>
+      <div className={`${depth > 0 ? 'ml-4 md:ml-8 border-l border-border pl-3 md:pl-4' : ''}`}>
         <div className="bg-card rounded-lg p-4 mb-2">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-              <User className="h-4 w-4 text-primary" />
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${comment.isAdmin ? 'bg-primary' : 'bg-primary/20'}`}>
+              {comment.isAdmin ? (
+                <Shield className="h-4 w-4 text-primary-foreground" />
+              ) : (
+                <User className="h-4 w-4 text-primary" />
+              )}
             </div>
-            <div>
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">{authorName}</span>
-              <span className="text-xs text-muted-foreground ml-2">
+              {comment.isAdmin && (
+                <Badge variant="default" className="text-xs px-1.5 py-0.5">
+                  Admin
+                </Badge>
+              )}
+              <span className="text-xs text-muted-foreground">
                 {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: ptBR })}
               </span>
             </div>
