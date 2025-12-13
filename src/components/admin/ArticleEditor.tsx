@@ -1,22 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Save, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Save, Eye } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/lib/auth-context';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import MediumEditor from './editor/MediumEditor';
+import { ArticleMetaForm } from './editor/ArticleMetaForm';
 
 const ArticleEditor = () => {
   const { id } = useParams();
@@ -25,13 +16,23 @@ const ArticleEditor = () => {
   const { user } = useAuth();
   const isEditing = !!id;
 
+  // Form states
   const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [subtitle, setSubtitle] = useState('');
+  const [slug, setSlug] = useState('');
   const [content, setContent] = useState('');
+  const [contentJson, setContentJson] = useState<object>({});
   const [coverImage, setCoverImage] = useState('');
   const [contentType, setContentType] = useState<'news' | 'review' | 'other'>('news');
   const [isPublished, setIsPublished] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [metaTitle, setMetaTitle] = useState('');
+  const [metaDescription, setMetaDescription] = useState('');
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Auto-save states
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
 
   const { data: article, isLoading } = useQuery({
     queryKey: ['article-edit', id],
@@ -52,7 +53,8 @@ const ArticleEditor = () => {
   useEffect(() => {
     if (article) {
       setTitle(article.title);
-      setDescription(article.description || '');
+      setSubtitle(article.description || '');
+      setSlug(article.slug);
       setContent(article.content || '');
       setCoverImage(article.cover_image || '');
       setContentType(article.content_type as 'news' | 'review' | 'other');
@@ -60,8 +62,8 @@ const ArticleEditor = () => {
     }
   }, [article]);
 
-  const generateSlug = (title: string) => {
-    return title
+  const generateSlug = (text: string) => {
+    return text
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -71,7 +73,7 @@ const ArticleEditor = () => {
       .trim();
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCoverImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -79,7 +81,7 @@ const ArticleEditor = () => {
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}.${fileExt}`;
 
-    const { error: uploadError, data } = await supabase.storage
+    const { error: uploadError } = await supabase.storage
       .from('uploads')
       .upload(`covers/${fileName}`, file);
 
@@ -92,15 +94,22 @@ const ArticleEditor = () => {
     const { data: urlData } = supabase.storage.from('uploads').getPublicUrl(`covers/${fileName}`);
     setCoverImage(urlData.publicUrl);
     setUploading(false);
+    setIsDirty(true);
   };
+
+  const handleEditorChange = useCallback((html: string, json: object) => {
+    setContent(html);
+    setContentJson(json);
+    setIsDirty(true);
+  }, []);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const slug = generateSlug(title);
+      const finalSlug = slug || generateSlug(title);
       const articleData = {
         title,
-        slug,
-        description,
+        slug: finalSlug,
+        description: subtitle || metaDescription,
         content,
         cover_image: coverImage,
         content_type: contentType,
@@ -121,6 +130,8 @@ const ArticleEditor = () => {
     },
     onSuccess: () => {
       toast({ title: isEditing ? 'Artigo atualizado!' : 'Artigo criado!' });
+      setLastSaved(new Date());
+      setIsDirty(false);
       navigate('/admin/artigos');
     },
     onError: (error: Error) => {
@@ -132,113 +143,138 @@ const ArticleEditor = () => {
     },
   });
 
+  // Auto-save draft every 30 seconds
+  useEffect(() => {
+    if (!isDirty || !title) return;
+
+    const timer = setTimeout(async () => {
+      if (isEditing && id) {
+        const { error } = await supabase
+          .from('articles')
+          .update({
+            title,
+            slug: slug || generateSlug(title),
+            description: subtitle,
+            content,
+            cover_image: coverImage,
+            content_type: contentType,
+          })
+          .eq('id', id);
+        
+        if (!error) {
+          setLastSaved(new Date());
+          setIsDirty(false);
+        }
+      }
+    }, 30000);
+
+    return () => clearTimeout(timer);
+  }, [isDirty, title, subtitle, content, coverImage, contentType, slug, isEditing, id]);
+
   if (isLoading) {
     return <div className="text-center py-12">Carregando...</div>;
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-4 mb-8">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/admin/artigos')}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="text-3xl font-display font-bold">
-          {isEditing ? 'Editar Artigo' : 'Novo Artigo'}
-        </h1>
-      </div>
+    <div className="min-h-screen">
+      {/* Header */}
+      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => navigate('/admin/artigos')}>
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <h1 className="text-xl font-display font-bold hidden sm:block">
+              {isEditing ? 'Editar Artigo' : 'Novo Artigo'}
+            </h1>
+          </div>
 
-      <div className="max-w-3xl space-y-6">
-        <div>
-          <Label htmlFor="title">Título</Label>
-          <Input
-            id="title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Título do artigo"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="type">Tipo</Label>
-          <Select value={contentType} onValueChange={(v) => setContentType(v as any)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="news">Notícia</SelectItem>
-              <SelectItem value="review">Review</SelectItem>
-              <SelectItem value="other">Outro</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label htmlFor="description">Descrição</Label>
-          <Textarea
-            id="description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Breve descrição do artigo"
-            rows={3}
-          />
-        </div>
-
-        <div>
-          <Label>Imagem de Capa</Label>
-          <div className="mt-2 flex items-center gap-4">
-            {coverImage && (
-              <img src={coverImage} alt="Capa" className="w-32 h-20 object-cover rounded-lg" />
+          <div className="flex items-center gap-2">
+            {lastSaved && (
+              <span className="text-xs text-muted-foreground hidden sm:block">
+                Salvo às {lastSaved.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
             )}
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-              <Button variant="outline" disabled={uploading} asChild>
-                <span>
-                  <ImageIcon className="h-4 w-4" />
-                  {uploading ? 'Enviando...' : 'Escolher Imagem'}
-                </span>
-              </Button>
-            </label>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPreview(!showPreview)}
+            >
+              <Eye className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1">Preview</span>
+            </Button>
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={() => saveMutation.mutate()}
+              disabled={!title || saveMutation.isPending}
+            >
+              <Save className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1">
+                {saveMutation.isPending ? 'Salvando...' : 'Salvar'}
+              </span>
+            </Button>
           </div>
         </div>
+      </div>
 
-        <div>
-          <Label htmlFor="content">Conteúdo (HTML)</Label>
-          <Textarea
-            id="content"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="Conteúdo do artigo em HTML..."
-            rows={15}
-            className="font-mono text-sm"
-          />
-        </div>
+      {/* Content */}
+      <div className="container mx-auto px-4 py-6">
+        <div className={`grid gap-6 ${showPreview ? 'lg:grid-cols-2' : 'lg:grid-cols-3'}`}>
+          {/* Sidebar - Meta form */}
+          <div className={`${showPreview ? 'hidden lg:block' : 'lg:col-span-1'} order-2 lg:order-1`}>
+            <div className="sticky top-20">
+              <ArticleMetaForm
+                title={title}
+                setTitle={(v) => { setTitle(v); setIsDirty(true); }}
+                subtitle={subtitle}
+                setSubtitle={(v) => { setSubtitle(v); setIsDirty(true); }}
+                slug={slug}
+                setSlug={(v) => { setSlug(v); setIsDirty(true); }}
+                contentType={contentType}
+                setContentType={(v) => { setContentType(v); setIsDirty(true); }}
+                coverImage={coverImage}
+                onCoverImageUpload={handleCoverImageUpload}
+                uploading={uploading}
+                metaTitle={metaTitle}
+                setMetaTitle={setMetaTitle}
+                metaDescription={metaDescription}
+                setMetaDescription={setMetaDescription}
+                isPublished={isPublished}
+                setIsPublished={(v) => { setIsPublished(v); setIsDirty(true); }}
+              />
+            </div>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <Switch
-            id="published"
-            checked={isPublished}
-            onCheckedChange={setIsPublished}
-          />
-          <Label htmlFor="published">Publicado</Label>
-        </div>
+          {/* Main Editor */}
+          <div className={`${showPreview ? 'lg:col-span-1' : 'lg:col-span-2'} order-1 lg:order-2`}>
+            <MediumEditor
+              content={content}
+              onChange={handleEditorChange}
+            />
+          </div>
 
-        <div className="flex gap-4">
-          <Button
-            variant="accent"
-            onClick={() => saveMutation.mutate()}
-            disabled={!title || saveMutation.isPending}
-          >
-            <Save className="h-4 w-4" />
-            {saveMutation.isPending ? 'Salvando...' : 'Salvar'}
-          </Button>
-          <Button variant="outline" onClick={() => navigate('/admin/artigos')}>
-            Cancelar
-          </Button>
+          {/* Preview */}
+          {showPreview && (
+            <div className="lg:col-span-1 order-3 hidden lg:block">
+              <div className="sticky top-20 bg-card border border-border rounded-xl p-6 max-h-[calc(100vh-6rem)] overflow-y-auto">
+                <h2 className="text-sm font-semibold text-muted-foreground mb-4">Preview</h2>
+                {coverImage && (
+                  <img 
+                    src={coverImage} 
+                    alt="Capa" 
+                    className="w-full h-48 object-cover rounded-lg mb-4" 
+                  />
+                )}
+                <h1 className="text-2xl font-bold mb-2">{title || 'Título do artigo'}</h1>
+                {subtitle && <p className="text-muted-foreground mb-4">{subtitle}</p>}
+                <div 
+                  className="prose prose-invert prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: content || '<p>Comece a escrever...</p>' }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
