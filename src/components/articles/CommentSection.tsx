@@ -127,7 +127,10 @@ const CommentSection = ({ articleId }: CommentSectionProps) => {
 
   const CommentItem = ({ comment, depth = 0 }: { comment: Comment; depth?: number }) => {
     const replies = getReplies(comment.id);
-    const authorName = comment.profiles?.username || comment.guest_name || 'Anônimo';
+    // Show profile username for logged users, guest_name for guests, never show "Anônimo" for admins
+    const authorName = comment.user_id 
+      ? (comment.profiles?.username || 'Usuário') 
+      : (comment.guest_name || 'Anônimo');
 
     return (
       <div className={`${depth > 0 ? 'ml-4 md:ml-8 border-l border-border pl-3 md:pl-4' : ''}`}>

@@ -9,7 +9,8 @@ import {
   Plus,
   Video,
   Menu,
-  X
+  X,
+  FolderDown
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
@@ -17,8 +18,10 @@ import AdminDashboard from '@/components/admin/AdminDashboard';
 import AdminArticles from '@/components/admin/AdminArticles';
 import AdminComments from '@/components/admin/AdminComments';
 import AdminAds from '@/components/admin/AdminAds';
+import AdminDownloads from '@/components/admin/AdminDownloads';
 import ArticleEditor from '@/components/admin/ArticleEditor';
 import TrailerEditor from '@/components/admin/TrailerEditor';
+import DownloadEditor from '@/components/admin/DownloadEditor';
 
 const Admin = () => {
   const { isAdmin, isLoading, user } = useAuth();
@@ -55,6 +58,7 @@ const Admin = () => {
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/admin' },
     { icon: FileText, label: 'Artigos', path: '/admin/artigos' },
+    { icon: FolderDown, label: 'Diversos', path: '/admin/diversos' },
     { icon: MessageSquare, label: 'Comentários', path: '/admin/comentarios' },
     { icon: Megaphone, label: 'Anúncios', path: '/admin/anuncios' },
   ];
@@ -149,6 +153,9 @@ const Admin = () => {
             <Route path="artigos/:id" element={<ArticleEditor />} />
             <Route path="trailers/novo" element={<TrailerEditor />} />
             <Route path="trailers/:id" element={<TrailerEditor />} />
+            <Route path="diversos" element={<AdminDownloads />} />
+            <Route path="diversos/novo" element={<DownloadEditor />} />
+            <Route path="diversos/:id" element={<DownloadEditor />} />
             <Route path="comentarios" element={<AdminComments />} />
             <Route path="anuncios" element={<AdminAds />} />
           </Routes>

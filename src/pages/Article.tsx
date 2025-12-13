@@ -47,11 +47,14 @@ const Article = () => {
     enabled: !!slug,
   });
 
-  // Increment views
+  // Increment views on every page load
   useEffect(() => {
-    if (article?.id) {
-      supabase.rpc('increment_views', { article_id: article.id });
-    }
+    const incrementViews = async () => {
+      if (article?.id) {
+        await supabase.rpc('increment_views', { article_id: article.id });
+      }
+    };
+    incrementViews();
   }, [article?.id]);
 
   if (isLoading) {
