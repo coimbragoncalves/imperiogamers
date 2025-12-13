@@ -187,6 +187,51 @@ export type Database = {
           },
         ]
       }
+      downloads: {
+        Row: {
+          category: string
+          cover_image: string | null
+          created_at: string
+          description: string | null
+          download_url: string
+          downloads_count: number
+          file_size: string | null
+          id: string
+          is_published: boolean
+          title: string
+          updated_at: string
+          views: number
+        }
+        Insert: {
+          category?: string
+          cover_image?: string | null
+          created_at?: string
+          description?: string | null
+          download_url: string
+          downloads_count?: number
+          file_size?: string | null
+          id?: string
+          is_published?: boolean
+          title: string
+          updated_at?: string
+          views?: number
+        }
+        Update: {
+          category?: string
+          cover_image?: string | null
+          created_at?: string
+          description?: string | null
+          download_url?: string
+          downloads_count?: number
+          file_size?: string | null
+          id?: string
+          is_published?: boolean
+          title?: string
+          updated_at?: string
+          views?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -300,6 +345,14 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_download_count: {
+        Args: { download_id: string }
+        Returns: undefined
+      }
+      increment_download_views: {
+        Args: { download_id: string }
+        Returns: undefined
       }
       increment_views: { Args: { article_id: string }; Returns: undefined }
       update_reaction_counts: {

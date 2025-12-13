@@ -55,11 +55,14 @@ const Trailer = () => {
     enabled: !!slug,
   });
 
-  // Increment views
+  // Increment views on every page load
   useEffect(() => {
-    if (trailer?.id) {
-      supabase.rpc('increment_views', { article_id: trailer.id });
-    }
+    const incrementViews = async () => {
+      if (trailer?.id) {
+        await supabase.rpc('increment_views', { article_id: trailer.id });
+      }
+    };
+    incrementViews();
   }, [trailer?.id]);
 
   if (isLoading) {
