@@ -91,17 +91,29 @@ const LatestDownloads = () => {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {downloads.map((item) => (
-            <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-              {item.cover_image && (
-                <div className="aspect-video overflow-hidden">
-                  <img
-                    src={item.cover_image}
-                    alt={item.title}
-                    className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                  />
-                </div>
-              )}
+          {downloads.map((item) => {
+            // Parse cover_image which may be JSON array
+            let coverImage = '';
+            if (item.cover_image) {
+              try {
+                const parsed = JSON.parse(item.cover_image);
+                coverImage = Array.isArray(parsed) ? parsed[0] : item.cover_image;
+              } catch {
+                coverImage = item.cover_image;
+              }
+            }
+            
+            return (
+              <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                {coverImage && (
+                  <div className="aspect-video overflow-hidden">
+                    <img
+                      src={coverImage}
+                      alt={item.title}
+                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+                    />
+                  </div>
+                )}
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                   {categoryIcons[item.category]}
@@ -122,7 +134,8 @@ const LatestDownloads = () => {
                 </Button>
               </CardFooter>
             </Card>
-          ))}
+            );
+          })}
         </div>
       </div>
     </section>
