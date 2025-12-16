@@ -2,6 +2,7 @@ import { Helmet } from 'react-helmet-async';
 import Layout from '@/components/layout/Layout';
 import HeroSection from '@/components/home/HeroSection';
 import LatestArticles from '@/components/home/LatestArticles';
+import LatestDownloads from '@/components/home/LatestDownloads';
 
 const Index = () => {
   return (
@@ -13,6 +14,7 @@ const Index = () => {
       <Layout>
         <HeroSection />
         <LatestArticles />
+        <LatestDownloads />
       </Layout>
     </>
   );

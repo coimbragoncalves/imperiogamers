@@ -20,13 +20,14 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
   const [copied, setCopied] = useState(false);
   
   const basePath = contentType === 'trailer' ? '/trailer/' : '/artigo/';
-  const fullUrl = `${window.location.origin}${basePath}${slug}`;
+  // Use the current origin for sharing - this will be the production URL when deployed
+  const currentOrigin = window.location.origin;
+  const fullUrl = `${currentOrigin}${basePath}${slug}`;
   const encodedUrl = encodeURIComponent(fullUrl);
   const encodedTitle = encodeURIComponent(title);
-  const encodedDescription = encodeURIComponent(description || title);
 
   const shareLinks = {
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedTitle}`,
     twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedTitle}`,
     whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
   };
