@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Save, Upload, Link as LinkIcon } from 'lucide-react';
+import { ArrowLeft, Save, Upload, Link as LinkIcon, X, GripVertical, Star } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ interface DownloadData {
   category: string;
   download_url: string;
   cover_image: string;
+  images: string[];
   file_size: string;
   is_published: boolean;
 }
@@ -41,6 +42,7 @@ const DownloadEditor = () => {
     category: 'game',
     download_url: '',
     cover_image: '',
+    images: [],
     file_size: '',
     is_published: false,
   });
@@ -63,41 +65,93 @@ const DownloadEditor = () => {
 
   useEffect(() => {
     if (existingItem) {
+      // Parse images from cover_image field (stored as JSON array or single URL)
+      let images: string[] = [];
+      if (existingItem.cover_image) {
+        try {
+          const parsed = JSON.parse(existingItem.cover_image);
+          images = Array.isArray(parsed) ? parsed : [existingItem.cover_image];
+        } catch {
+          images = [existingItem.cover_image];
+        }
+      }
+      
       setFormData({
         title: existingItem.title || '',
         description: existingItem.description || '',
         category: existingItem.category || 'game',
         download_url: existingItem.download_url || '',
-        cover_image: existingItem.cover_image || '',
+        cover_image: images[0] || '',
+        images: images,
         file_size: existingItem.file_size || '',
         is_published: existingItem.is_published || false,
       });
     }
   }, [existingItem]);
 
-  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `download-covers/${Date.now()}.${fileExt}`;
+      const uploadedUrls: string[] = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fileExt = file.name.split('.').pop();
+        const fileName = `download-images/${Date.now()}-${i}.${fileExt}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('uploads')
-        .upload(fileName, file);
+        const { error: uploadError } = await supabase.storage
+          .from('uploads')
+          .upload(fileName, file);
 
-      if (uploadError) throw uploadError;
+        if (uploadError) throw uploadError;
 
-      const { data } = supabase.storage.from('uploads').getPublicUrl(fileName);
-      setFormData(prev => ({ ...prev, cover_image: data.publicUrl }));
-      toast({ title: 'Imagem carregada!' });
+        const { data } = supabase.storage.from('uploads').getPublicUrl(fileName);
+        uploadedUrls.push(data.publicUrl);
+      }
+
+      setFormData(prev => {
+        const newImages = [...prev.images, ...uploadedUrls];
+        return {
+          ...prev,
+          images: newImages,
+          cover_image: newImages[0] || '',
+        };
+      });
+      
+      toast({ title: `${uploadedUrls.length} imagem(ns) carregada(s)!` });
     } catch (error: any) {
       toast({ title: 'Erro ao carregar imagem', description: error.message, variant: 'destructive' });
     } finally {
       setUploading(false);
+      e.target.value = '';
     }
+  };
+
+  const removeImage = (index: number) => {
+    setFormData(prev => {
+      const newImages = prev.images.filter((_, i) => i !== index);
+      return {
+        ...prev,
+        images: newImages,
+        cover_image: newImages[0] || '',
+      };
+    });
+  };
+
+  const setCoverImage = (index: number) => {
+    setFormData(prev => {
+      const newImages = [...prev.images];
+      const [selectedImage] = newImages.splice(index, 1);
+      newImages.unshift(selectedImage);
+      return {
+        ...prev,
+        images: newImages,
+        cover_image: newImages[0],
+      };
+    });
   };
 
   const saveMutation = useMutation({
@@ -106,12 +160,17 @@ const DownloadEditor = () => {
         throw new Error('Título e link de download são obrigatórios');
       }
 
+      // Store images as JSON array in cover_image field
+      const imagesToSave = formData.images.length > 0 
+        ? JSON.stringify(formData.images)
+        : null;
+
       const dataToSave = {
         title: formData.title,
         description: formData.description || null,
         category: formData.category,
         download_url: formData.download_url,
-        cover_image: formData.cover_image || null,
+        cover_image: imagesToSave,
         file_size: formData.file_size || null,
         is_published: formData.is_published,
       };
@@ -228,31 +287,76 @@ const DownloadEditor = () => {
           />
         </div>
 
-        {/* Cover Image */}
+        {/* Images Gallery */}
         <div className="space-y-2">
-          <Label>Imagem de Capa</Label>
-          <div className="flex flex-col sm:flex-row gap-4">
-            {formData.cover_image && (
-              <img
-                src={formData.cover_image}
-                alt="Cover"
-                className="w-32 h-32 object-cover rounded-lg"
-              />
-            )}
-            <div className="flex-1">
-              <label className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-primary transition-colors">
-                <Upload className="h-5 w-5" />
-                <span>{uploading ? 'Carregando...' : 'Selecionar imagem'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleCoverUpload}
-                  className="hidden"
-                  disabled={uploading}
-                />
-              </label>
+          <Label>Imagens (a primeira é a capa)</Label>
+          <p className="text-sm text-muted-foreground mb-2">
+            Adicione até 10+ imagens. A primeira imagem será usada como capa.
+          </p>
+          
+          {/* Image Grid */}
+          {formData.images.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-4">
+              {formData.images.map((img, index) => (
+                <div
+                  key={index}
+                  className={`relative group rounded-lg overflow-hidden border-2 ${
+                    index === 0 ? 'border-primary ring-2 ring-primary/30' : 'border-border'
+                  }`}
+                >
+                  <img
+                    src={img}
+                    alt={`Imagem ${index + 1}`}
+                    className="w-full aspect-square object-cover"
+                  />
+                  
+                  {/* Cover Badge */}
+                  {index === 0 && (
+                    <div className="absolute top-1 left-1 bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Star className="h-3 w-3" />
+                      Capa
+                    </div>
+                  )}
+                  
+                  {/* Actions Overlay */}
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                    {index !== 0 && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setCoverImage(index)}
+                        title="Definir como capa"
+                      >
+                        <Star className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => removeImage(index)}
+                      title="Remover"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          )}
+
+          {/* Upload Button */}
+          <label className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-primary transition-colors">
+            <Upload className="h-5 w-5" />
+            <span>{uploading ? 'Carregando...' : 'Adicionar imagens'}</span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleImageUpload}
+              className="hidden"
+              disabled={uploading}
+            />
+          </label>
         </div>
 
         {/* Publish Toggle */}
