@@ -97,7 +97,7 @@ const Admin = () => {
           w-64 bg-card border-r border-border p-4 flex flex-col
           transform transition-transform duration-200 ease-in-out
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:translate-x-0
+          md:translate-x-0 pt-16 md:pt-4
         `}>
           <Link to="/" className="hidden md:block text-xl font-display font-bold text-primary mb-8">
             Império Gamers
@@ -131,6 +131,12 @@ const Admin = () => {
               <Link to="/admin/trailers/novo">
                 <Video className="h-4 w-4" />
                 Novo Trailer
+              </Link>
+            </Button>
+            <Button variant="outline" className="w-full justify-start" asChild>
+              <Link to="/admin/diversos/novo">
+                <FolderDown className="h-4 w-4" />
+                Novo Download
               </Link>
             </Button>
           </div>

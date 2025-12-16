@@ -20,6 +20,7 @@ const Header = () => {
     { label: 'Notícias', href: '/noticias' },
     { label: 'Reviews', href: '/reviews' },
     { label: 'Trailers', href: '/trailers' },
+    { label: 'Diversos', href: '/diversos' },
   ];
 
   return (
