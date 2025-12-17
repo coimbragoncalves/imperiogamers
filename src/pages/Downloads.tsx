@@ -46,14 +46,6 @@ const Downloads = () => {
     },
   });
 
-  const handleDownload = async (item: DownloadItem) => {
-    // Increment view count
-    await supabase.rpc('increment_download_views', { download_id: item.id });
-    // Increment download count
-    await supabase.rpc('increment_download_count', { download_id: item.id });
-    // Open download link
-    window.open(item.download_url, '_blank');
-  };
 
   return (
     <>
@@ -98,53 +90,54 @@ const Downloads = () => {
               }
               
               return (
-                <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-                  {coverImage && (
-                    <div className="aspect-video overflow-hidden">
-                      <img
-                        src={coverImage}
-                        alt={item.title}
-                        className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                      />
-                    </div>
-                  )}
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-                      {categoryIcons[item.category]}
-                      <span>{categoryLabels[item.category]}</span>
-                      {item.file_size && (
-                        <>
-                          <span>•</span>
-                          <span>{item.file_size}</span>
-                        </>
-                      )}
-                    </div>
-                    <h3 className="font-semibold text-lg line-clamp-2">{item.title}</h3>
-                  </CardHeader>
-                  <CardContent className="pb-2">
-                    {item.description && (
-                      <p className="text-sm text-muted-foreground line-clamp-3">
-                        {item.description}
-                      </p>
+                <Link key={item.id} to={`/diversos/${item.id}`}>
+                  <Card className="overflow-hidden hover:shadow-lg transition-shadow h-full">
+                    {coverImage && (
+                      <div className="aspect-video overflow-hidden">
+                        <img
+                          src={coverImage}
+                          alt={item.title}
+                          className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+                        />
+                      </div>
                     )}
-                  </CardContent>
-                  <CardFooter className="flex items-center justify-between pt-0">
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Eye className="h-3 w-3" />
-                        {item.views}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Download className="h-3 w-3" />
-                        {item.downloads_count}
-                      </span>
-                    </div>
-                    <Button size="sm" onClick={() => handleDownload(item)}>
-                      <Download className="h-4 w-4" />
-                      Baixar
-                    </Button>
-                  </CardFooter>
-                </Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                        {categoryIcons[item.category]}
+                        <span>{categoryLabels[item.category]}</span>
+                        {item.file_size && (
+                          <>
+                            <span>•</span>
+                            <span>{item.file_size}</span>
+                          </>
+                        )}
+                      </div>
+                      <h3 className="font-semibold text-lg line-clamp-2">{item.title}</h3>
+                    </CardHeader>
+                    <CardContent className="pb-2">
+                      {item.description && (
+                        <p className="text-sm text-muted-foreground line-clamp-3">
+                          {item.description}
+                        </p>
+                      )}
+                    </CardContent>
+                    <CardFooter className="flex items-center justify-between pt-0">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Eye className="h-3 w-3" />
+                          {item.views}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Download className="h-3 w-3" />
+                          {item.downloads_count}
+                        </span>
+                      </div>
+                      <Button size="sm">
+                        Ver Detalhes
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </Link>
               );
             })}
             </div>

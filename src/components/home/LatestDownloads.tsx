@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Download, Gamepad2, Wrench, Package, Eye, ArrowRight } from 'lucide-react';
+import { Download, Gamepad2, Wrench, Package, ArrowRight } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
@@ -45,11 +45,6 @@ const LatestDownloads = () => {
     },
   });
 
-  const handleDownload = async (item: DownloadItem) => {
-    await supabase.rpc('increment_download_views', { download_id: item.id });
-    await supabase.rpc('increment_download_count', { download_id: item.id });
-    window.open(item.download_url, '_blank');
-  };
 
   if (isLoading) {
     return (
@@ -104,36 +99,37 @@ const LatestDownloads = () => {
             }
             
             return (
-              <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-                {coverImage && (
-                  <div className="aspect-video overflow-hidden">
-                    <img
-                      src={coverImage}
-                      alt={item.title}
-                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                    />
-                  </div>
-                )}
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                  {categoryIcons[item.category]}
-                  <span>{categoryLabels[item.category]}</span>
-                </div>
-                <h3 className="font-semibold line-clamp-2">{item.title}</h3>
-              </CardHeader>
-              <CardFooter className="flex items-center justify-between pt-0">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Download className="h-3 w-3" />
-                    {item.downloads_count}
-                  </span>
-                </div>
-                <Button size="sm" variant="outline" onClick={() => handleDownload(item)}>
-                  <Download className="h-4 w-4" />
-                  Baixar
-                </Button>
-              </CardFooter>
-            </Card>
+              <Link key={item.id} to={`/diversos/${item.id}`}>
+                <Card className="overflow-hidden hover:shadow-lg transition-shadow h-full">
+                  {coverImage && (
+                    <div className="aspect-video overflow-hidden">
+                      <img
+                        src={coverImage}
+                        alt={item.title}
+                        className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+                      />
+                    </div>
+                  )}
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                      {categoryIcons[item.category]}
+                      <span>{categoryLabels[item.category]}</span>
+                    </div>
+                    <h3 className="font-semibold line-clamp-2">{item.title}</h3>
+                  </CardHeader>
+                  <CardFooter className="flex items-center justify-between pt-0">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Download className="h-3 w-3" />
+                        {item.downloads_count}
+                      </span>
+                    </div>
+                    <Button size="sm" variant="outline">
+                      Ver Detalhes
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </Link>
             );
           })}
         </div>
