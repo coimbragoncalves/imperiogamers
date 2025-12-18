@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import CommentSection from '@/components/articles/CommentSection';
 import ReactionButtons from '@/components/articles/ReactionButtons';
 import ShareButtons from '@/components/articles/ShareButtons';
+import AdDisplay from '@/components/ads/AdDisplay';
 
 interface ArticleData {
   id: string;
@@ -114,6 +115,9 @@ const Article = () => {
       </Helmet>
       <Layout>
         <article className="container mx-auto px-4 py-12 max-w-4xl">
+          {/* Ad - Top */}
+          <AdDisplay position="article-top" className="mb-6" />
+
           {/* Back button */}
           <Button variant="ghost" size="sm" asChild className="mb-6">
             <Link to="/">
@@ -168,6 +172,9 @@ const Article = () => {
 
           {/* Reactions */}
           <ReactionButtons articleId={article.id} likes={article.likes} dislikes={article.dislikes} />
+
+          {/* Ad - Bottom */}
+          <AdDisplay position="article-bottom" className="my-8" />
 
           {/* Comments */}
           <CommentSection articleId={article.id} />

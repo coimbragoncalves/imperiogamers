@@ -20,16 +20,21 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
   const [copied, setCopied] = useState(false);
   
   const basePath = contentType === 'trailer' ? '/trailer/' : '/artigo/';
-  // Use the current origin for sharing - this will be the production URL when deployed
   const currentOrigin = window.location.origin;
   const fullUrl = `${currentOrigin}${basePath}${slug}`;
-  const encodedUrl = encodeURIComponent(fullUrl);
   const encodedTitle = encodeURIComponent(title);
 
+  // Use edge function URL for Facebook to get proper OG meta tags
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const ogUrl = `${supabaseUrl}/functions/v1/og-image?slug=${slug}&type=${contentType === 'trailer' ? 'trailer' : 'article'}&site_url=${encodeURIComponent(currentOrigin)}`;
+  const encodedOgUrl = encodeURIComponent(ogUrl);
+  const encodedFullUrl = encodeURIComponent(fullUrl);
+
   const shareLinks = {
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}&quote=${encodedTitle}`,
-    twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedTitle}`,
-    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
+    // Facebook uses the edge function URL which returns proper meta tags
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}&quote=${encodedTitle}`,
+    twitter: `https://twitter.com/intent/tweet?url=${encodedFullUrl}&text=${encodedTitle}`,
+    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedFullUrl}`,
   };
 
   const copyToClipboard = async () => {
