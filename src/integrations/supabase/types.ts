@@ -44,6 +44,80 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_post_logs: {
+        Row: {
+          article_id: string | null
+          content_type: string
+          created_at: string
+          error_message: string | null
+          id: string
+          source_site: string
+          source_url: string
+          status: string
+        }
+        Insert: {
+          article_id?: string | null
+          content_type: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          source_site: string
+          source_url: string
+          status?: string
+        }
+        Update: {
+          article_id?: string | null
+          content_type?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          source_site?: string
+          source_url?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_post_logs_article_id_fkey"
+            columns: ["article_id"]
+            isOneToOne: false
+            referencedRelation: "articles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_settings: {
+        Row: {
+          created_at: string
+          id: string
+          is_enabled: boolean
+          last_run_at: string | null
+          schedule_times: Json
+          source_sites: Json
+          updated_at: string
+          youtube_channels: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          last_run_at?: string | null
+          schedule_times?: Json
+          source_sites?: Json
+          updated_at?: string
+          youtube_channels?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          last_run_at?: string | null
+          schedule_times?: Json
+          source_sites?: Json
+          updated_at?: string
+          youtube_channels?: Json
+        }
+        Relationships: []
+      }
       article_images: {
         Row: {
           article_id: string
