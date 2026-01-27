@@ -10,7 +10,8 @@ import {
   Video,
   Menu,
   X,
-  FolderDown
+  FolderDown,
+  Bot
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ import AdminArticles from '@/components/admin/AdminArticles';
 import AdminComments from '@/components/admin/AdminComments';
 import AdminAds from '@/components/admin/AdminAds';
 import AdminDownloads from '@/components/admin/AdminDownloads';
+import AdminAI from '@/components/admin/AdminAI';
 import ArticleEditor from '@/components/admin/ArticleEditor';
 import TrailerEditor from '@/components/admin/TrailerEditor';
 import DownloadEditor from '@/components/admin/DownloadEditor';
@@ -61,6 +63,7 @@ const Admin = () => {
     { icon: FolderDown, label: 'Diversos', path: '/admin/diversos' },
     { icon: MessageSquare, label: 'Comentários', path: '/admin/comentarios' },
     { icon: Megaphone, label: 'Anúncios', path: '/admin/anuncios' },
+    { icon: Bot, label: 'IA Auto-Post', path: '/admin/ia' },
   ];
 
   return (
@@ -164,6 +167,7 @@ const Admin = () => {
             <Route path="diversos/:id" element={<DownloadEditor />} />
             <Route path="comentarios" element={<AdminComments />} />
             <Route path="anuncios" element={<AdminAds />} />
+            <Route path="ia" element={<AdminAI />} />
           </Routes>
         </main>
       </div>
