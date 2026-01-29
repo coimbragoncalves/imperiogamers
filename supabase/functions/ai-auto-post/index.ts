@@ -315,10 +315,37 @@ serve(async (req) => {
       );
     }
 
+    // Separate news and reviews, prioritize: 3 news + 1 review per run
+    const newsOnly = newsItems.filter(item => item.contentType === 'news');
+    const reviewsOnly = newsItems.filter(item => item.contentType === 'review');
+    const trailersOnly = newsItems.filter(item => item.contentType === 'trailer');
+    
+    // Build the final list: up to 3 news + 1 review + trailers
+    const itemsToProcess: NewsItem[] = [];
+    
+    // Add up to 3 news items
+    for (const item of newsOnly) {
+      if (itemsToProcess.filter(i => i.contentType === 'news').length < 3) {
+        itemsToProcess.push(item);
+      }
+    }
+    
+    // Add 1 review
+    if (reviewsOnly.length > 0) {
+      itemsToProcess.push(reviewsOnly[0]);
+    }
+    
+    // Add trailers (optional)
+    for (const item of trailersOnly.slice(0, 2)) {
+      itemsToProcess.push(item);
+    }
+    
+    console.log(`Processing ${itemsToProcess.length} items: ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
+
     // Process each news item with AI
     let postsCreated = 0;
     
-    for (const item of newsItems.slice(0, 5)) { // Limit to 5 posts per run
+    for (const item of itemsToProcess) {
       try {
         // Check if we already posted this URL
         const { data: existingLog } = await supabase
