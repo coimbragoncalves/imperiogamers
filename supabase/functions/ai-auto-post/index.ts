@@ -10,11 +10,124 @@ interface NewsItem {
   title: string;
   description: string;
   content: string;
-  imageUrl: string | null;
+  imageUrls: string[]; // Array of all available images
   sourceUrl: string;
   sourceSite: string;
   contentType: 'news' | 'review' | 'trailer';
   youtubeUrl?: string;
+}
+
+// Patterns to identify and exclude logos from images
+const LOGO_PATTERNS = [
+  /logo/i,
+  /brand/i,
+  /icon/i,
+  /favicon/i,
+  /sprite/i,
+  /avatar/i,
+  /social/i,
+  /share/i,
+  /button/i,
+  /badge/i,
+  /widget/i,
+  /ad-/i,
+  /advertisement/i,
+  /banner-ad/i,
+  /promo-/i,
+  /tracking/i,
+  /pixel/i,
+  /1x1/i,
+  /spacer/i,
+  /-small\./i,
+  /-thumb\./i,
+  /thumbnail-small/i,
+];
+
+// Known site logo domains/paths to exclude
+const LOGO_DOMAINS = [
+  'googleadservices',
+  'doubleclick',
+  'facebook.com/tr',
+  'analytics',
+  'cdn.cnn.com/cnn-brightcove',
+  'assets.ign.com/logos',
+  'gamespot.com/bundles',
+  'kotaku.com/assets',
+  'polygon.com/logos',
+  'pcgamer.com/bundles',
+];
+
+function isLikelyLogo(imageUrl: string): boolean {
+  if (!imageUrl) return true;
+  
+  // Check for logo patterns in URL
+  for (const pattern of LOGO_PATTERNS) {
+    if (pattern.test(imageUrl)) return true;
+  }
+  
+  // Check for known logo domains
+  for (const domain of LOGO_DOMAINS) {
+    if (imageUrl.includes(domain)) return true;
+  }
+  
+  // Filter out very small images (often used for tracking/logos)
+  // Check for size indicators in URL
+  if (/\/(50|40|32|24|16|20)x\d+/i.test(imageUrl)) return true;
+  if (/\/\d+x(50|40|32|24|16|20)/i.test(imageUrl)) return true;
+  
+  // Filter out data URIs (usually small icons)
+  if (imageUrl.startsWith('data:')) return true;
+  
+  return false;
+}
+
+function extractAllImages(html: string, markdown: string): string[] {
+  const images: Set<string> = new Set();
+  
+  // Extract from HTML - get all img tags
+  const htmlImgMatches = html?.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi) || [];
+  for (const match of htmlImgMatches) {
+    if (match[1] && !isLikelyLogo(match[1])) {
+      images.add(match[1]);
+    }
+  }
+  
+  // Extract from HTML - get srcset images (often higher quality)
+  const srcsetMatches = html?.matchAll(/srcset=["']([^"']+)["']/gi) || [];
+  for (const match of srcsetMatches) {
+    const srcsetUrls = match[1].split(',').map(s => s.trim().split(' ')[0]);
+    for (const url of srcsetUrls) {
+      if (url && !isLikelyLogo(url)) {
+        images.add(url);
+      }
+    }
+  }
+  
+  // Extract from HTML - data-src (lazy loaded images)
+  const dataSrcMatches = html?.matchAll(/data-src=["']([^"']+)["']/gi) || [];
+  for (const match of dataSrcMatches) {
+    if (match[1] && !isLikelyLogo(match[1])) {
+      images.add(match[1]);
+    }
+  }
+  
+  // Extract from markdown
+  const mdImgMatches = markdown?.matchAll(/!\[.*?\]\(([^)]+)\)/g) || [];
+  for (const match of mdImgMatches) {
+    if (match[1] && !isLikelyLogo(match[1])) {
+      images.add(match[1]);
+    }
+  }
+  
+  // Extract from markdown - reference style images
+  const mdRefMatches = markdown?.matchAll(/\[.*?\]:\s*(https?:\/\/[^\s]+)/g) || [];
+  for (const match of mdRefMatches) {
+    if (match[1] && !isLikelyLogo(match[1]) && /\.(jpg|jpeg|png|gif|webp)/i.test(match[1])) {
+      images.add(match[1]);
+    }
+  }
+  
+  return Array.from(images);
 }
 
 serve(async (req) => {
@@ -112,20 +225,24 @@ serve(async (req) => {
               contentType = 'trailer';
             }
 
-            // Extract image from markdown or metadata
-            let imageUrl = null;
-            if (result.metadata?.ogImage) {
-              imageUrl = result.metadata.ogImage;
-            } else if (result.html) {
-              const imgMatch = result.html.match(/<img[^>]+src="([^"]+)"/);
-              if (imgMatch) imageUrl = imgMatch[1];
+            // Extract ALL images from the content, excluding logos
+            const allImages = extractAllImages(result.html || '', result.markdown || '');
+            
+            // Also add OG image if it's not a logo
+            if (result.metadata?.ogImage && !isLikelyLogo(result.metadata.ogImage)) {
+              // Add OG image at the beginning if not already present
+              if (!allImages.includes(result.metadata.ogImage)) {
+                allImages.unshift(result.metadata.ogImage);
+              }
             }
+            
+            console.log(`Found ${allImages.length} images for: ${result.title}`);
 
             newsItems.push({
               title: result.title || 'Untitled',
               description: result.description || '',
               content: result.markdown || result.description || '',
-              imageUrl,
+              imageUrls: allImages,
               sourceUrl: result.url,
               sourceSite: site,
               contentType
@@ -162,11 +279,20 @@ serve(async (req) => {
         if (searchData.success && searchData.data) {
           for (const result of searchData.data) {
             if (result.url?.includes('youtube.com/watch')) {
+              // Extract video ID for thumbnail
+              const videoIdMatch = result.url.match(/[?&]v=([^&]+)/);
+              const thumbnails: string[] = [];
+              if (videoIdMatch) {
+                // Add multiple quality thumbnails
+                thumbnails.push(`https://img.youtube.com/vi/${videoIdMatch[1]}/maxresdefault.jpg`);
+                thumbnails.push(`https://img.youtube.com/vi/${videoIdMatch[1]}/hqdefault.jpg`);
+              }
+              
               newsItems.push({
                 title: result.title || 'Game Trailer',
                 description: result.description || '',
                 content: result.description || '',
-                imageUrl: null,
+                imageUrls: thumbnails,
                 sourceUrl: result.url,
                 sourceSite: 'youtube.com',
                 contentType: 'trailer',
@@ -220,20 +346,25 @@ serve(async (req) => {
             messages: [
               {
                 role: 'system',
-                content: `Você é um jornalista de games brasileiro. Reescreva notícias de games em português brasileiro de forma original e engajante. 
+                content: `Você é um jornalista de games brasileiro do portal "Império Gamers". Reescreva notícias de games em português brasileiro de forma original e engajante. 
                 
-Regras:
-- Reescreva o conteúdo de forma ORIGINAL, não copie
-- Use linguagem informal mas profissional
-- Mantenha os fatos importantes
-- Crie um título atraente em português
-- A descrição deve ter 1-2 frases
-- O conteúdo deve ter 3-5 parágrafos em HTML
-- Responda APENAS em JSON válido com a estrutura: {"title": "...", "description": "...", "content": "<p>...</p>"}`
+REGRAS IMPORTANTES:
+- Reescreva o conteúdo de forma COMPLETAMENTE ORIGINAL, não copie
+- NUNCA mencione a fonte original (sites como IGN, GameSpot, Kotaku, PC Gamer, Polygon, etc.)
+- NUNCA inclua logos, marcas ou referências visuais a outros sites
+- Use linguagem informal mas profissional, como um gamer brasileiro falaria
+- Mantenha os fatos e informações importantes do jogo/notícia
+- Crie um título atraente e original em português
+- A descrição deve ter 1-2 frases chamativas
+- O conteúdo deve ter 3-5 parágrafos em HTML puro (use <p>, <strong>, <em>)
+- Foque apenas no JOGO ou ASSUNTO da notícia, não na fonte
+- Se mencionar desenvolvedores ou publishers, cite apenas os oficiais (Nintendo, Sony, Microsoft, Ubisoft, etc.)
+
+Responda APENAS em JSON válido com a estrutura: {"title": "...", "description": "...", "content": "<p>...</p>"}`
               },
               {
                 role: 'user',
-                content: `Reescreva esta notícia:\n\nTítulo original: ${item.title}\n\nConteúdo:\n${item.content.substring(0, 3000)}`
+                content: `Reescreva esta notícia sobre games (ignore qualquer menção ao site fonte):\n\nTítulo original: ${item.title}\n\nConteúdo:\n${item.content.substring(0, 3000)}`
               }
             ],
           }),
@@ -298,6 +429,9 @@ Regras:
           .replace(/\s+/g, '-')
           .substring(0, 100);
 
+        // Use the first available image as cover, or null
+        const coverImage = item.imageUrls.length > 0 ? item.imageUrls[0] : null;
+        
         // Create the article
         const { data: article, error: articleError } = await supabase
           .from('articles')
@@ -306,13 +440,35 @@ Regras:
             slug: slug + '-' + Date.now(),
             description: parsedContent.description,
             content: parsedContent.content,
-            cover_image: item.imageUrl,
+            cover_image: coverImage,
             content_type: item.contentType,
             youtube_url: item.youtubeUrl || null,
             is_published: true
           })
           .select()
           .single();
+        
+        // If article created successfully, save all additional images
+        if (!articleError && article && item.imageUrls.length > 1) {
+          const additionalImages = item.imageUrls.slice(1).map((url, index) => ({
+            article_id: article.id,
+            image_url: url,
+            position: index + 1,
+            caption: null
+          }));
+          
+          if (additionalImages.length > 0) {
+            const { error: imagesError } = await supabase
+              .from('article_images')
+              .insert(additionalImages);
+            
+            if (imagesError) {
+              console.error('Error saving additional images:', imagesError);
+            } else {
+              console.log(`Saved ${additionalImages.length} additional images for article`);
+            }
+          }
+        }
 
         if (articleError) {
           console.error('Error creating article:', articleError);
