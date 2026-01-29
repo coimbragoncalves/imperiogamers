@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Menu, X, User, LogOut, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth-context';
+import ThemeToggle from '@/components/ThemeToggle';
 import logo from '@/assets/logo.png';
 
 const Header = () => {
@@ -44,8 +45,9 @@ const Header = () => {
           ))}
         </nav>
 
-        {/* Auth Buttons */}
-        <div className="hidden md:flex items-center gap-3">
+        {/* Theme Toggle & Auth Buttons */}
+        <div className="hidden md:flex items-center gap-2">
+          <ThemeToggle />
           {user ? (
             <>
               {isAdmin && (
@@ -95,6 +97,10 @@ const Header = () => {
               </Link>
             ))}
             <div className="pt-4 border-t border-border mt-2 flex flex-col gap-2">
+              <div className="flex items-center justify-between py-2">
+                <span className="text-muted-foreground text-sm">Tema</span>
+                <ThemeToggle />
+              </div>
               {user ? (
                 <>
                   {isAdmin && (
