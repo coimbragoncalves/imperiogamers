@@ -5,6 +5,7 @@ import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, Eye, Calendar } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import DOMPurify from 'dompurify';
 import { supabase } from '@/integrations/supabase/client';
 import Layout from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
@@ -13,7 +14,6 @@ import CommentSection from '@/components/articles/CommentSection';
 import ReactionButtons from '@/components/articles/ReactionButtons';
 import ShareButtons from '@/components/articles/ShareButtons';
 import AdDisplay from '@/components/ads/AdDisplay';
-
 interface ArticleData {
   id: string;
   title: string;
@@ -166,7 +166,11 @@ const Article = () => {
           {article.content && (
             <div 
               className="prose prose-invert prose-lg max-w-none mb-8"
-              dangerouslySetInnerHTML={{ __html: article.content }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(article.content, {
+                ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'a', 'img', 'blockquote', 'pre', 'code', 'span', 'div', 'iframe'],
+                ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'target', 'rel', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'],
+                ALLOW_DATA_ATTR: false
+              }) }}
             />
           )}
 
