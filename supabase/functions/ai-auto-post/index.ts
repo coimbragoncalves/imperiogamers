@@ -189,15 +189,16 @@ serve(async (req) => {
       try {
         console.log(`Scraping ${site}...`);
         
-        const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
+        // Search for news
+        const newsResponse = await fetch('https://api.firecrawl.dev/v1/search', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${firecrawlKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            query: `site:${site} gaming news OR review`,
-            limit: 3,
+            query: `site:${site} gaming news`,
+            limit: 5,
             tbs: 'qdr:d', // Last 24 hours
             scrapeOptions: {
               formats: ['markdown', 'html']
@@ -205,50 +206,76 @@ serve(async (req) => {
           }),
         });
 
-        if (!searchResponse.ok) {
-          console.error(`Failed to search ${site}: ${searchResponse.status}`);
-          continue;
-        }
-
-        const searchData = await searchResponse.json();
-        
-        if (searchData.success && searchData.data) {
-          for (const result of searchData.data.slice(0, 2)) {
-            // Determine content type based on URL/title
-            let contentType: 'news' | 'review' | 'trailer' = 'news';
-            const lowerTitle = (result.title || '').toLowerCase();
-            const lowerUrl = (result.url || '').toLowerCase();
-            
-            if (lowerTitle.includes('review') || lowerUrl.includes('review')) {
-              contentType = 'review';
-            } else if (lowerTitle.includes('trailer') || lowerUrl.includes('trailer')) {
-              contentType = 'trailer';
-            }
-
-            // Extract ALL images from the content, excluding logos
-            const allImages = extractAllImages(result.html || '', result.markdown || '');
-            
-            // Also add OG image if it's not a logo
-            if (result.metadata?.ogImage && !isLikelyLogo(result.metadata.ogImage)) {
-              // Add OG image at the beginning if not already present
-              if (!allImages.includes(result.metadata.ogImage)) {
-                allImages.unshift(result.metadata.ogImage);
+        if (newsResponse.ok) {
+          const newsData = await newsResponse.json();
+          if (newsData.success && newsData.data) {
+            for (const result of newsData.data) {
+              const allImages = extractAllImages(result.html || '', result.markdown || '');
+              if (result.metadata?.ogImage && !isLikelyLogo(result.metadata.ogImage)) {
+                if (!allImages.includes(result.metadata.ogImage)) {
+                  allImages.unshift(result.metadata.ogImage);
+                }
               }
+              console.log(`Found ${allImages.length} images for news: ${result.title}`);
+              newsItems.push({
+                title: result.title || 'Untitled',
+                description: result.description || '',
+                content: result.markdown || result.description || '',
+                imageUrls: allImages,
+                sourceUrl: result.url,
+                sourceSite: site,
+                contentType: 'news'
+              });
             }
-            
-            console.log(`Found ${allImages.length} images for: ${result.title}`);
-
-            newsItems.push({
-              title: result.title || 'Untitled',
-              description: result.description || '',
-              content: result.markdown || result.description || '',
-              imageUrls: allImages,
-              sourceUrl: result.url,
-              sourceSite: site,
-              contentType
-            });
           }
         }
+
+        // Search for reviews separately
+        const reviewResponse = await fetch('https://api.firecrawl.dev/v1/search', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${firecrawlKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: `site:${site} game review`,
+            limit: 5,
+            tbs: 'qdr:w', // Last week for reviews
+            scrapeOptions: {
+              formats: ['markdown', 'html']
+            }
+          }),
+        });
+
+        if (reviewResponse.ok) {
+          const reviewData = await reviewResponse.json();
+          if (reviewData.success && reviewData.data) {
+            for (const result of reviewData.data) {
+              // Only add if URL or title contains "review"
+              const lowerTitle = (result.title || '').toLowerCase();
+              const lowerUrl = (result.url || '').toLowerCase();
+              if (!lowerTitle.includes('review') && !lowerUrl.includes('review')) continue;
+              
+              const allImages = extractAllImages(result.html || '', result.markdown || '');
+              if (result.metadata?.ogImage && !isLikelyLogo(result.metadata.ogImage)) {
+                if (!allImages.includes(result.metadata.ogImage)) {
+                  allImages.unshift(result.metadata.ogImage);
+                }
+              }
+              console.log(`Found ${allImages.length} images for review: ${result.title}`);
+              newsItems.push({
+                title: result.title || 'Untitled',
+                description: result.description || '',
+                content: result.markdown || result.description || '',
+                imageUrls: allImages,
+                sourceUrl: result.url,
+                sourceSite: site,
+                contentType: 'review'
+              });
+            }
+          }
+        }
+
       } catch (error) {
         console.error(`Error scraping ${site}:`, error);
       }
@@ -266,8 +293,8 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            query: `site:youtube.com ${channel} game trailer`,
-            limit: 2,
+            query: `site:youtube.com ${channel} game trailer official`,
+            limit: 5,
             tbs: 'qdr:w', // Last week
           }),
         });
@@ -315,12 +342,12 @@ serve(async (req) => {
       );
     }
 
-    // Separate news and reviews, prioritize: 3 news + 1 review per run
+    // Separate content types: 3 news + 3 reviews + 3 trailers per run
     const newsOnly = newsItems.filter(item => item.contentType === 'news');
     const reviewsOnly = newsItems.filter(item => item.contentType === 'review');
     const trailersOnly = newsItems.filter(item => item.contentType === 'trailer');
     
-    // Build the final list: up to 3 news + 1 review + trailers
+    // Build the final list: 3 of each type
     const itemsToProcess: NewsItem[] = [];
     
     // Add up to 3 news items
@@ -330,14 +357,18 @@ serve(async (req) => {
       }
     }
     
-    // Add 1 review
-    if (reviewsOnly.length > 0) {
-      itemsToProcess.push(reviewsOnly[0]);
+    // Add up to 3 reviews
+    for (const item of reviewsOnly) {
+      if (itemsToProcess.filter(i => i.contentType === 'review').length < 3) {
+        itemsToProcess.push(item);
+      }
     }
     
-    // Add trailers (optional)
-    for (const item of trailersOnly.slice(0, 2)) {
-      itemsToProcess.push(item);
+    // Add up to 3 trailers
+    for (const item of trailersOnly) {
+      if (itemsToProcess.filter(i => i.contentType === 'trailer').length < 3) {
+        itemsToProcess.push(item);
+      }
     }
     
     console.log(`Processing ${itemsToProcess.length} items: ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
