@@ -27,10 +27,7 @@ const HeroSection = () => {
             Bem-vindo ao{' '}
             <span className="text-gradient-gaming">Império Gamers</span>
           </h1>
-          <p className="text-lg md:text-xl text-muted-foreground mb-8">
-            Seu portal completo de notícias, reviews e trailers do mundo dos games.
-            Fique por dentro de tudo que acontece no universo gamer!
-          </p>
+          <div className="mb-8" />
           <div className="flex flex-wrap gap-4">
             <Button variant="hero" size="xl" asChild>
               <Link to="/noticias">
