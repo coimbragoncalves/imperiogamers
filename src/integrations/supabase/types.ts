@@ -412,6 +412,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_comment_rate_limit: {
+        Args: { p_guest_name: string; p_user_id: string }
+        Returns: boolean
+      }
+      check_reaction_rate_limit: {
+        Args: { p_guest_id: string; p_user_id: string }
+        Returns: boolean
+      }
       generate_slug: { Args: { title: string }; Returns: string }
       has_role: {
         Args: {
@@ -429,6 +437,7 @@ export type Database = {
         Returns: undefined
       }
       increment_views: { Args: { article_id: string }; Returns: undefined }
+      is_safe_content: { Args: { content: string }; Returns: boolean }
       update_reaction_counts: {
         Args: {
           p_article_id: string
