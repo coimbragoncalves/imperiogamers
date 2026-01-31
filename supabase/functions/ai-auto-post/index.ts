@@ -136,6 +136,17 @@ serve(async (req) => {
   }
 
   try {
+    // Verifica se é execução manual (forceNew ignora verificação de duplicatas)
+    let forceNew = false;
+    try {
+      const body = await req.json();
+      forceNew = body?.forceNew === true;
+    } catch {
+      // Corpo vazio, execução automática (cron)
+    }
+    
+    console.log('Execution mode:', forceNew ? 'MANUAL (force new)' : 'AUTOMATIC (check duplicates)');
+    
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
@@ -378,16 +389,18 @@ serve(async (req) => {
     
     for (const item of itemsToProcess) {
       try {
-        // Check if we already posted this URL
-        const { data: existingLog } = await supabase
-          .from('ai_post_logs')
-          .select('id')
-          .eq('source_url', item.sourceUrl)
-          .single();
+        // Check if we already posted this URL (skip check if forceNew is true)
+        if (!forceNew) {
+          const { data: existingLog } = await supabase
+            .from('ai_post_logs')
+            .select('id')
+            .eq('source_url', item.sourceUrl)
+            .single();
 
-        if (existingLog) {
-          console.log(`Already posted: ${item.sourceUrl}`);
-          continue;
+          if (existingLog) {
+            console.log(`Already posted: ${item.sourceUrl}`);
+            continue;
+          }
         }
 
         console.log(`Processing: ${item.title}`);

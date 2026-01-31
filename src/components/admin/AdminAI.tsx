@@ -131,7 +131,10 @@ const AdminAI = () => {
   const runNow = async () => {
     setIsRunning(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ai-auto-post');
+      // Passa forceNew: true para ignorar verificação de duplicatas
+      const { data, error } = await supabase.functions.invoke('ai-auto-post', {
+        body: { forceNew: true }
+      });
       
       if (error) throw error;
       
