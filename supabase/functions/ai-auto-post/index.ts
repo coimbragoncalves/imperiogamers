@@ -139,11 +139,15 @@ serve(async (req) => {
     // Verifica parâmetros da execução
     let forceNew = false;
     let postsPerType = 3; // Default: 3 posts per type
+    let contentTypes: string[] = ['news', 'review', 'trailer']; // Default: all types
     try {
       const body = await req.json();
       forceNew = body?.forceNew === true;
       if (body?.postsPerType && typeof body.postsPerType === 'number') {
         postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
+      }
+      if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
+        contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer'].includes(t));
       }
     } catch {
       // Corpo vazio, execução automática (cron)
@@ -151,6 +155,7 @@ serve(async (req) => {
     
     console.log('Execution mode:', forceNew ? 'MANUAL (force new)' : 'AUTOMATIC (check duplicates)');
     console.log('Posts per type:', postsPerType);
+    console.log('Content types:', contentTypes);
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -358,32 +363,44 @@ serve(async (req) => {
       );
     }
 
-    // Separate content types: X news + X reviews + X trailers per run (based on postsPerType)
-    const newsOnly = newsItems.filter(item => item.contentType === 'news');
-    const reviewsOnly = newsItems.filter(item => item.contentType === 'review');
-    const trailersOnly = newsItems.filter(item => item.contentType === 'trailer');
+    // Separate content types based on selected types
+    const newsOnly = contentTypes.includes('news') 
+      ? newsItems.filter(item => item.contentType === 'news') 
+      : [];
+    const reviewsOnly = contentTypes.includes('review') 
+      ? newsItems.filter(item => item.contentType === 'review') 
+      : [];
+    const trailersOnly = contentTypes.includes('trailer') 
+      ? newsItems.filter(item => item.contentType === 'trailer') 
+      : [];
     
-    // Build the final list: postsPerType of each type
+    // Build the final list: postsPerType of each selected type
     const itemsToProcess: NewsItem[] = [];
     
-    // Add up to postsPerType news items
-    for (const item of newsOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'news').length < postsPerType) {
-        itemsToProcess.push(item);
+    // Add up to postsPerType news items (if selected)
+    if (contentTypes.includes('news')) {
+      for (const item of newsOnly) {
+        if (itemsToProcess.filter(i => i.contentType === 'news').length < postsPerType) {
+          itemsToProcess.push(item);
+        }
       }
     }
     
-    // Add up to postsPerType reviews
-    for (const item of reviewsOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'review').length < postsPerType) {
-        itemsToProcess.push(item);
+    // Add up to postsPerType reviews (if selected)
+    if (contentTypes.includes('review')) {
+      for (const item of reviewsOnly) {
+        if (itemsToProcess.filter(i => i.contentType === 'review').length < postsPerType) {
+          itemsToProcess.push(item);
+        }
       }
     }
     
-    // Add up to postsPerType trailers
-    for (const item of trailersOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'trailer').length < postsPerType) {
-        itemsToProcess.push(item);
+    // Add up to postsPerType trailers (if selected)
+    if (contentTypes.includes('trailer')) {
+      for (const item of trailersOnly) {
+        if (itemsToProcess.filter(i => i.contentType === 'trailer').length < postsPerType) {
+          itemsToProcess.push(item);
+        }
       }
     }
     

@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Bot, 
@@ -21,7 +22,10 @@ import {
   XCircle,
   Loader2,
   Zap,
-  Hash
+  Hash,
+  Newspaper,
+  Star,
+  Film
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -47,13 +51,24 @@ interface AIPostLog {
   created_at: string;
 }
 
+interface ContentTypes {
+  news: boolean;
+  review: boolean;
+  trailer: boolean;
+}
+
 const AdminAI = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [newSite, setNewSite] = useState('');
   const [newChannel, setNewChannel] = useState('');
   const [isRunning, setIsRunning] = useState(false);
-  const [postsPerType, setPostsPerType] = useState(3); // Quantidade de posts por tipo
+  const [postsPerType, setPostsPerType] = useState(3);
+  const [contentTypes, setContentTypes] = useState<ContentTypes>({
+    news: true,
+    review: true,
+    trailer: true,
+  });
 
   const { data: settings, isLoading: loadingSettings } = useQuery({
     queryKey: ['ai-settings'],
@@ -133,11 +148,22 @@ const AdminAI = () => {
   };
 
   const runNow = async () => {
+    const selectedTypes = Object.entries(contentTypes)
+      .filter(([, enabled]) => enabled)
+      .map(([type]) => type);
+    
+    if (selectedTypes.length === 0) {
+      toast({ 
+        title: 'Selecione pelo menos um tipo de conteúdo', 
+        variant: 'destructive' 
+      });
+      return;
+    }
+
     setIsRunning(true);
     try {
-      // Passa forceNew: true e postsPerType para controlar a execução
       const { data, error } = await supabase.functions.invoke('ai-auto-post', {
-        body: { forceNew: true, postsPerType }
+        body: { forceNew: true, postsPerType, contentTypes: selectedTypes }
       });
       
       if (error) throw error;
@@ -207,49 +233,110 @@ const AdminAI = () => {
         </div>
       </div>
 
-      {/* Quantidade de Posts por Execução */}
-      <Card className="p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Hash className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Quantidade de Posts por Execução</h2>
-        </div>
-        
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label className="text-sm text-muted-foreground">
-              Posts por tipo (notícias, reviews, trailers)
-            </Label>
-            <Badge variant="secondary" className="text-lg font-bold px-4 py-1">
-              {postsPerType}
-            </Badge>
+      {/* Configurações de Execução */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Tipos de Conteúdo */}
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Film className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold">Tipos de Conteúdo</h2>
           </div>
           
-          <Slider
-            value={[postsPerType]}
-            onValueChange={(value) => setPostsPerType(value[0])}
-            min={1}
-            max={10}
-            step={1}
-            className="w-full"
-          />
-          
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>1</span>
-            <span>5</span>
-            <span>10</span>
-          </div>
-          
-          <p className="text-sm text-muted-foreground">
-            Total por execução: até <strong>{postsPerType * 3} posts</strong> ({postsPerType} notícias + {postsPerType} reviews + {postsPerType} trailers)
+          <p className="text-sm text-muted-foreground mb-4">
+            Selecione quais tipos de conteúdo a IA deve gerar
           </p>
-        </div>
-      </Card>
+          
+          <div className="space-y-3">
+            <div className="flex items-center space-x-3">
+              <Checkbox 
+                id="news" 
+                checked={contentTypes.news}
+                onCheckedChange={(checked) => 
+                  setContentTypes(prev => ({ ...prev, news: checked === true }))
+                }
+              />
+              <Label htmlFor="news" className="flex items-center gap-2 cursor-pointer">
+                <Newspaper className="h-4 w-4 text-primary" />
+                Notícias
+              </Label>
+            </div>
+            
+            <div className="flex items-center space-x-3">
+              <Checkbox 
+                id="review" 
+                checked={contentTypes.review}
+                onCheckedChange={(checked) => 
+                  setContentTypes(prev => ({ ...prev, review: checked === true }))
+                }
+              />
+              <Label htmlFor="review" className="flex items-center gap-2 cursor-pointer">
+                <Star className="h-4 w-4 text-gaming-gold" />
+                Reviews
+              </Label>
+            </div>
+            
+            <div className="flex items-center space-x-3">
+              <Checkbox 
+                id="trailer" 
+                checked={contentTypes.trailer}
+                onCheckedChange={(checked) => 
+                  setContentTypes(prev => ({ ...prev, trailer: checked === true }))
+                }
+              />
+              <Label htmlFor="trailer" className="flex items-center gap-2 cursor-pointer">
+                <Film className="h-4 w-4 text-accent" />
+                Trailers
+              </Label>
+            </div>
+          </div>
+        </Card>
+
+        {/* Quantidade de Posts por Execução */}
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Hash className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold">Quantidade por Tipo</h2>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm text-muted-foreground">
+                Posts por tipo selecionado
+              </Label>
+              <Badge variant="secondary" className="text-lg font-bold px-4 py-1">
+                {postsPerType}
+              </Badge>
+            </div>
+            
+            <Slider
+              value={[postsPerType]}
+              onValueChange={(value) => setPostsPerType(value[0])}
+              min={1}
+              max={10}
+              step={1}
+              className="w-full"
+            />
+            
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>1</span>
+              <span>5</span>
+              <span>10</span>
+            </div>
+            
+            <p className="text-sm text-muted-foreground">
+              Total por execução: até <strong>
+                {postsPerType * Object.values(contentTypes).filter(Boolean).length} posts
+              </strong>
+            </p>
+          </div>
+        </Card>
+      </div>
 
       {/* Status Card */}
-      <Card className={`p-4 ${settings?.is_enabled ? 'border-green-500/50 bg-green-500/5' : 'border-muted'}`}>
-        <div className="flex items-center justify-between">
+      <Card className={`p-4 ${settings?.is_enabled ? 'border-primary/50 bg-primary/5' : 'border-muted'}`}>
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <Zap className={`h-5 w-5 ${settings?.is_enabled ? 'text-green-500' : 'text-muted-foreground'}`} />
+            <Zap className={`h-5 w-5 ${settings?.is_enabled ? 'text-primary' : 'text-muted-foreground'}`} />
             <div>
               <p className="font-medium">
                 {settings?.is_enabled ? 'IA está ativa' : 'IA está desativada'}
