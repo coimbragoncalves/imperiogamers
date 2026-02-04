@@ -136,16 +136,21 @@ serve(async (req) => {
   }
 
   try {
-    // Verifica se é execução manual (forceNew ignora verificação de duplicatas)
+    // Verifica parâmetros da execução
     let forceNew = false;
+    let postsPerType = 3; // Default: 3 posts per type
     try {
       const body = await req.json();
       forceNew = body?.forceNew === true;
+      if (body?.postsPerType && typeof body.postsPerType === 'number') {
+        postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
+      }
     } catch {
       // Corpo vazio, execução automática (cron)
     }
     
     console.log('Execution mode:', forceNew ? 'MANUAL (force new)' : 'AUTOMATIC (check duplicates)');
+    console.log('Posts per type:', postsPerType);
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -353,36 +358,36 @@ serve(async (req) => {
       );
     }
 
-    // Separate content types: 3 news + 3 reviews + 3 trailers per run
+    // Separate content types: X news + X reviews + X trailers per run (based on postsPerType)
     const newsOnly = newsItems.filter(item => item.contentType === 'news');
     const reviewsOnly = newsItems.filter(item => item.contentType === 'review');
     const trailersOnly = newsItems.filter(item => item.contentType === 'trailer');
     
-    // Build the final list: 3 of each type
+    // Build the final list: postsPerType of each type
     const itemsToProcess: NewsItem[] = [];
     
-    // Add up to 3 news items
+    // Add up to postsPerType news items
     for (const item of newsOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'news').length < 3) {
+      if (itemsToProcess.filter(i => i.contentType === 'news').length < postsPerType) {
         itemsToProcess.push(item);
       }
     }
     
-    // Add up to 3 reviews
+    // Add up to postsPerType reviews
     for (const item of reviewsOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'review').length < 3) {
+      if (itemsToProcess.filter(i => i.contentType === 'review').length < postsPerType) {
         itemsToProcess.push(item);
       }
     }
     
-    // Add up to 3 trailers
+    // Add up to postsPerType trailers
     for (const item of trailersOnly) {
-      if (itemsToProcess.filter(i => i.contentType === 'trailer').length < 3) {
+      if (itemsToProcess.filter(i => i.contentType === 'trailer').length < postsPerType) {
         itemsToProcess.push(item);
       }
     }
     
-    console.log(`Processing ${itemsToProcess.length} items: ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
+    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
 
     // Process each news item with AI
     let postsCreated = 0;
