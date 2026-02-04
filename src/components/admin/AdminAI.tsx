@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Slider } from '@/components/ui/slider';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Bot, 
@@ -18,7 +20,8 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  Zap
+  Zap,
+  Hash
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -50,6 +53,7 @@ const AdminAI = () => {
   const [newSite, setNewSite] = useState('');
   const [newChannel, setNewChannel] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  const [postsPerType, setPostsPerType] = useState(3); // Quantidade de posts por tipo
 
   const { data: settings, isLoading: loadingSettings } = useQuery({
     queryKey: ['ai-settings'],
@@ -131,9 +135,9 @@ const AdminAI = () => {
   const runNow = async () => {
     setIsRunning(true);
     try {
-      // Passa forceNew: true para ignorar verificação de duplicatas
+      // Passa forceNew: true e postsPerType para controlar a execução
       const { data, error } = await supabase.functions.invoke('ai-auto-post', {
-        body: { forceNew: true }
+        body: { forceNew: true, postsPerType }
       });
       
       if (error) throw error;
@@ -202,6 +206,44 @@ const AdminAI = () => {
           </Button>
         </div>
       </div>
+
+      {/* Quantidade de Posts por Execução */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Hash className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Quantidade de Posts por Execução</h2>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm text-muted-foreground">
+              Posts por tipo (notícias, reviews, trailers)
+            </Label>
+            <Badge variant="secondary" className="text-lg font-bold px-4 py-1">
+              {postsPerType}
+            </Badge>
+          </div>
+          
+          <Slider
+            value={[postsPerType]}
+            onValueChange={(value) => setPostsPerType(value[0])}
+            min={1}
+            max={10}
+            step={1}
+            className="w-full"
+          />
+          
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>1</span>
+            <span>5</span>
+            <span>10</span>
+          </div>
+          
+          <p className="text-sm text-muted-foreground">
+            Total por execução: até <strong>{postsPerType * 3} posts</strong> ({postsPerType} notícias + {postsPerType} reviews + {postsPerType} trailers)
+          </p>
+        </div>
+      </Card>
 
       {/* Status Card */}
       <Card className={`p-4 ${settings?.is_enabled ? 'border-green-500/50 bg-green-500/5' : 'border-muted'}`}>
