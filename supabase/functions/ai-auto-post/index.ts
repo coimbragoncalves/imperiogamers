@@ -354,24 +354,34 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Found ${newsItems.length} news items`);
+    console.log(`Found ${newsItems.length} news items (before image filter)`);
 
-    if (newsItems.length === 0) {
+    // Filter out items without images - news/reviews need at least one image, trailers need youtube URL
+    const filteredItems = newsItems.filter(item => {
+      if (item.contentType === 'trailer') {
+        return item.youtubeUrl && item.youtubeUrl.length > 0;
+      }
+      return item.imageUrls.length > 0;
+    });
+
+    console.log(`After image filter: ${filteredItems.length} items (removed ${newsItems.length - filteredItems.length} without images)`);
+
+    if (filteredItems.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: 'No new content found', postsCreated: 0 }),
+        JSON.stringify({ success: true, message: 'No content with images found', postsCreated: 0 }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     // Separate content types based on selected types
     const newsOnly = contentTypes.includes('news') 
-      ? newsItems.filter(item => item.contentType === 'news') 
+      ? filteredItems.filter(item => item.contentType === 'news') 
       : [];
     const reviewsOnly = contentTypes.includes('review') 
-      ? newsItems.filter(item => item.contentType === 'review') 
+      ? filteredItems.filter(item => item.contentType === 'review') 
       : [];
     const trailersOnly = contentTypes.includes('trailer') 
-      ? newsItems.filter(item => item.contentType === 'trailer') 
+      ? filteredItems.filter(item => item.contentType === 'trailer') 
       : [];
     
     // Build the final list: postsPerType of each selected type
@@ -522,8 +532,36 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
           .replace(/\s+/g, '-')
           .substring(0, 100);
 
-        // Use the first available image as cover, or null
+        // Use the first available image as cover, or skip this item entirely
         const coverImage = item.imageUrls.length > 0 ? item.imageUrls[0] : null;
+        
+        // SAFETY: Never create posts without visual content
+        if (item.contentType !== 'trailer' && !coverImage) {
+          console.log(`Skipping "${parsedContent.title}" - no cover image available`);
+          await supabase.from('ai_post_logs').insert({
+            source_url: item.sourceUrl,
+            source_site: item.sourceSite,
+            content_type: item.contentType,
+            status: 'error',
+            error_message: 'No cover image available'
+          });
+          continue;
+        }
+        
+        if (item.contentType === 'trailer' && !item.youtubeUrl) {
+          console.log(`Skipping trailer "${parsedContent.title}" - no YouTube URL`);
+          await supabase.from('ai_post_logs').insert({
+            source_url: item.sourceUrl,
+            source_site: item.sourceSite,
+            content_type: item.contentType,
+            status: 'error',
+            error_message: 'No YouTube URL for trailer'
+          });
+          continue;
+        }
+        
+        // For trailers, use YouTube thumbnail as cover if no other image
+        const finalCoverImage = coverImage || (item.youtubeUrl ? `https://img.youtube.com/vi/${item.youtubeUrl.match(/[?&]v=([^&]+)/)?.[1]}/maxresdefault.jpg` : null);
         
         // Create the article
         const { data: article, error: articleError } = await supabase
@@ -533,7 +571,7 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
             slug: slug + '-' + Date.now(),
             description: parsedContent.description,
             content: parsedContent.content,
-            cover_image: coverImage,
+            cover_image: finalCoverImage,
             content_type: item.contentType,
             youtube_url: item.youtubeUrl || null,
             is_published: true
@@ -610,7 +648,7 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
         success: true, 
         message: `Created ${postsCreated} posts`,
         postsCreated,
-        itemsFound: newsItems.length
+        itemsFound: filteredItems.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
