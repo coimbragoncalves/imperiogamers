@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -17,6 +17,7 @@ interface Ad {
 
 const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const executedRef = useRef<string>('');
 
   const { data: ads } = useQuery({
     queryKey: ['ads', position],
@@ -32,8 +33,13 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
     },
   });
 
-  useEffect(() => {
+  const executeScripts = useCallback(() => {
     if (!ads || ads.length === 0 || !containerRef.current) return;
+
+    // Build a fingerprint to avoid re-executing the same scripts
+    const fingerprint = ads.map(a => a.id + (a.script || '')).join('|');
+    if (executedRef.current === fingerprint) return;
+    executedRef.current = fingerprint;
 
     // Clear previous content
     containerRef.current.innerHTML = '';
@@ -41,36 +47,112 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
     ads.forEach((ad) => {
       if (!ad.script) return;
 
-      // Create a temporary container to parse the HTML/script
+      const wrapper = document.createElement('div');
+      wrapper.setAttribute('data-ad-id', ad.id);
+
+      // Parse the HTML
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = ad.script;
 
-      // Find all script tags and recreate them to ensure execution
-      const scripts = tempDiv.querySelectorAll('script');
-      
-      scripts.forEach((oldScript) => {
-        const newScript = document.createElement('script');
-        
-        // Copy all attributes
-        Array.from(oldScript.attributes).forEach((attr) => {
-          newScript.setAttribute(attr.name, attr.value);
-        });
-        
-        // Copy inline script content
-        if (oldScript.textContent) {
-          newScript.textContent = oldScript.textContent;
+      // Extract script tags and non-script content separately
+      const scripts: { src?: string; text?: string; attrs: Record<string, string> }[] = [];
+      const nonScriptNodes: Node[] = [];
+
+      Array.from(tempDiv.childNodes).forEach((node) => {
+        if (node instanceof HTMLScriptElement) {
+          const scriptInfo: { src?: string; text?: string; attrs: Record<string, string> } = { attrs: {} };
+          Array.from(node.attributes).forEach((attr) => {
+            if (attr.name === 'src') {
+              scriptInfo.src = attr.value;
+            } else {
+              scriptInfo.attrs[attr.name] = attr.value;
+            }
+          });
+          if (node.textContent) {
+            scriptInfo.text = node.textContent;
+          }
+          scripts.push(scriptInfo);
+        } else {
+          nonScriptNodes.push(node.cloneNode(true));
         }
-        
-        // Replace old script with new one in temp container
-        oldScript.parentNode?.replaceChild(newScript, oldScript);
       });
 
-      // Append all content to the container
-      while (tempDiv.firstChild) {
-        containerRef.current?.appendChild(tempDiv.firstChild);
+      // Also find scripts nested inside other elements
+      const nestedScripts = tempDiv.querySelectorAll('script');
+      nestedScripts.forEach((scriptEl) => {
+        // Check if already captured at top level
+        const alreadyCaptured = scripts.some(
+          (s) => s.src === scriptEl.getAttribute('src') && s.text === scriptEl.textContent
+        );
+        if (!alreadyCaptured) {
+          const scriptInfo: { src?: string; text?: string; attrs: Record<string, string> } = { attrs: {} };
+          Array.from(scriptEl.attributes).forEach((attr) => {
+            if (attr.name === 'src') {
+              scriptInfo.src = attr.value;
+            } else {
+              scriptInfo.attrs[attr.name] = attr.value;
+            }
+          });
+          if (scriptEl.textContent) {
+            scriptInfo.text = scriptEl.textContent;
+          }
+          scripts.push(scriptInfo);
+          // Remove from parent so it's not duplicated
+          scriptEl.remove();
+        }
+      });
+
+      // Append non-script HTML first
+      nonScriptNodes.forEach((node) => wrapper.appendChild(node));
+
+      // Re-parse remaining HTML (after removing nested scripts)
+      const remainingHTML = tempDiv.innerHTML;
+      if (remainingHTML.trim()) {
+        const remainingDiv = document.createElement('div');
+        remainingDiv.innerHTML = remainingHTML;
+        while (remainingDiv.firstChild) {
+          wrapper.appendChild(remainingDiv.firstChild);
+        }
       }
+
+      containerRef.current?.appendChild(wrapper);
+
+      // Now create and append actual script elements to execute them
+      scripts.forEach((scriptInfo) => {
+        const newScript = document.createElement('script');
+        
+        // Set attributes
+        Object.entries(scriptInfo.attrs).forEach(([key, value]) => {
+          newScript.setAttribute(key, value);
+        });
+
+        if (scriptInfo.src) {
+          newScript.src = scriptInfo.src;
+          newScript.async = true;
+        }
+
+        if (scriptInfo.text && !scriptInfo.src) {
+          newScript.textContent = scriptInfo.text;
+        }
+
+        // Append to wrapper (or document head for external scripts)
+        if (scriptInfo.src) {
+          document.head.appendChild(newScript);
+        } else {
+          wrapper.appendChild(newScript);
+        }
+      });
     });
   }, [ads]);
+
+  useEffect(() => {
+    executeScripts();
+
+    return () => {
+      // Cleanup: reset fingerprint so scripts re-execute if component remounts
+      executedRef.current = '';
+    };
+  }, [executeScripts]);
 
   if (!ads || ads.length === 0) return null;
 
