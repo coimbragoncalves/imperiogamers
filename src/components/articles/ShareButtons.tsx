@@ -24,24 +24,26 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
   const fullUrl = `${currentOrigin}${basePath}${slug}`;
   const encodedTitle = encodeURIComponent(title);
 
-  // Use edge function URL for Facebook to get proper OG meta tags
+  // Use edge function URL for social platforms - crawlers get OG tags, users get redirected
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const ogUrl = `${supabaseUrl}/functions/v1/og-image?slug=${slug}&type=${contentType === 'trailer' ? 'trailer' : 'article'}&site_url=${encodeURIComponent(currentOrigin)}`;
   const encodedOgUrl = encodeURIComponent(ogUrl);
   const encodedFullUrl = encodeURIComponent(fullUrl);
 
   const shareLinks = {
-    // Facebook uses the edge function URL which returns proper meta tags
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}&quote=${encodedTitle}`,
-    twitter: `https://twitter.com/intent/tweet?url=${encodedFullUrl}&text=${encodedTitle}`,
-    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedFullUrl}`,
+    // All social platforms use OG URL so crawlers see proper meta tags
+    // Non-crawler users are automatically redirected to the real page
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}`,
+    twitter: `https://twitter.com/intent/tweet?url=${encodedOgUrl}&text=${encodedTitle}`,
+    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedOgUrl}`,
   };
 
   const copyToClipboard = async () => {
     try {
-      await navigator.clipboard.writeText(fullUrl);
+      // Copy the OG URL so pasting anywhere shows preview
+      await navigator.clipboard.writeText(ogUrl);
       setCopied(true);
-      toast.success('Link copiado!');
+      toast.success('Link copiado! O preview aparecerá ao colar no Facebook/WhatsApp.');
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       toast.error('Erro ao copiar link');
