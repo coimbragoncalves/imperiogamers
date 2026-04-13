@@ -21,18 +21,21 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
   
   const basePath = contentType === 'trailer' ? '/trailer/' : '/artigo/';
   const currentOrigin = window.location.origin;
+  // Clean article URL - this is what users see and what Facebook displays via og:url
   const fullUrl = `${currentOrigin}${basePath}${slug}`;
   const encodedTitle = encodeURIComponent(title);
 
-  // Use edge function URL for social platforms - crawlers get OG tags, users get redirected
+  // Edge function URL for social crawlers (they need server-rendered OG tags)
+  // Uses clean path-based routing: /og-image/artigo/slug
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const ogUrl = `${supabaseUrl}/functions/v1/og-image?slug=${slug}&type=${contentType === 'trailer' ? 'trailer' : 'article'}&site_url=${encodeURIComponent(currentOrigin)}`;
+  const ogType = contentType === 'trailer' ? 'trailer' : 'artigo';
+  const ogUrl = `${supabaseUrl}/functions/v1/og-image/${ogType}/${slug}`;
   const encodedOgUrl = encodeURIComponent(ogUrl);
-  const encodedFullUrl = encodeURIComponent(fullUrl);
 
   const shareLinks = {
-    // All social platforms use OG URL so crawlers see proper meta tags
-    // Non-crawler users are automatically redirected to the real page
+    // Social platforms use OG URL so crawlers see proper meta tags
+    // og:url inside the response points to the clean article URL
+    // So Facebook displays: imperiogamers.lovable.app (clean domain)
     facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}`,
     twitter: `https://twitter.com/intent/tweet?url=${encodedOgUrl}&text=${encodedTitle}`,
     whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedOgUrl}`,
@@ -40,10 +43,10 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
 
   const copyToClipboard = async () => {
     try {
-      // Copy the OG URL so pasting anywhere shows preview
-      await navigator.clipboard.writeText(ogUrl);
+      // Copy the CLEAN article URL (not the edge function URL)
+      await navigator.clipboard.writeText(fullUrl);
       setCopied(true);
-      toast.success('Link copiado! O preview aparecerá ao colar no Facebook/WhatsApp.');
+      toast.success('Link copiado!');
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       toast.error('Erro ao copiar link');

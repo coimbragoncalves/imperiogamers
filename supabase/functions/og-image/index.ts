@@ -5,7 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Known social media crawler user agents
 const CRAWLER_USER_AGENTS = [
   'facebookexternalhit',
   'Facebot',
@@ -20,7 +19,7 @@ const CRAWLER_USER_AGENTS = [
 ]
 
 function isCrawler(userAgent: string | null): boolean {
-  if (!userAgent) return true // Assume crawler if no UA
+  if (!userAgent) return true
   return CRAWLER_USER_AGENTS.some(bot => userAgent.toLowerCase().includes(bot.toLowerCase()))
 }
 
@@ -40,10 +39,37 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url)
-    const slug = url.searchParams.get('slug')
-    const type = url.searchParams.get('type') || 'article'
-    const siteUrl = url.searchParams.get('site_url') || 'https://imperiogamers.lovable.app'
     const userAgent = req.headers.get('user-agent')
+
+    // Support both path-based and query-based URLs
+    // Path-based: /og-image/artigo/my-slug or /og-image/trailer/my-slug
+    // Query-based (legacy): /og-image?slug=my-slug&type=article
+    let slug: string | null = null
+    let type = 'article'
+    let siteUrl = 'https://imperiogamers.lovable.app'
+
+    const pathParts = url.pathname.replace(/^\/og-image\/?/, '').split('/').filter(Boolean)
+    
+    if (pathParts.length >= 2) {
+      // Path-based: /og-image/artigo/slug or /og-image/trailer/slug
+      const pathType = pathParts[0]
+      slug = pathParts.slice(1).join('/')
+      type = pathType === 'trailer' ? 'trailer' : 'article'
+    } else if (pathParts.length === 1) {
+      // Path-based with just slug: /og-image/slug
+      slug = pathParts[0]
+    }
+
+    // Fallback to query params
+    if (!slug) {
+      slug = url.searchParams.get('slug')
+    }
+    if (url.searchParams.get('type')) {
+      type = url.searchParams.get('type')!
+    }
+    if (url.searchParams.get('site_url')) {
+      siteUrl = url.searchParams.get('site_url')!
+    }
 
     if (!slug) {
       return new Response(JSON.stringify({ error: 'Slug is required' }), {
@@ -59,7 +85,7 @@ Deno.serve(async (req) => {
 
     const { data: article, error } = await supabase
       .from('articles')
-      .select('title, description, cover_image, slug, content_type')
+      .select('title, description, cover_image, slug, content_type, created_at')
       .eq('slug', slug)
       .eq('is_published', true)
       .single()
@@ -71,8 +97,8 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Build canonical URL
-    const basePath = type === 'trailer' ? 'trailer' : 'artigo'
+    // Build the CLEAN canonical URL (the real article page)
+    const basePath = type === 'trailer' || article.content_type === 'trailer' ? 'trailer' : 'artigo'
     const articleUrl = `${siteUrl}/${basePath}/${article.slug}`
 
     // If not a crawler, redirect to the actual page
@@ -91,9 +117,10 @@ Deno.serve(async (req) => {
     const title = escapeHtml(article.title)
     const description = escapeHtml(article.description || article.title)
     const siteName = 'Império Gamers'
+    const publishedTime = article.created_at || new Date().toISOString()
 
     const html = `<!DOCTYPE html>
-<html lang="pt-BR" prefix="og: https://ogp.me/ns#">
+<html lang="pt-BR" prefix="og: https://ogp.me/ns# article: https://ogp.me/ns/article#">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -116,6 +143,8 @@ Deno.serve(async (req) => {
   <meta property="og:site_name" content="${siteName}">
   <meta property="og:locale" content="pt_BR">
   <meta property="article:publisher" content="${siteUrl}">
+  <meta property="article:published_time" content="${publishedTime}">
+  <meta property="fb:app_id" content="">
   
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
