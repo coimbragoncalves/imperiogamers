@@ -15,7 +15,7 @@ function escapeHtml(text: string): string {
 }
 
 // The published Vercel domain
-const SITE_URL = 'https://imperiogamer.vercel.app'
+const SITE_URL = 'https://imperiogamer1.vercel.app'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {

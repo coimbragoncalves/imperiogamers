@@ -17,7 +17,7 @@ interface ShareButtonsProps {
 }
 
 // Published site domain - clean URL for all sharing
-const SITE_URL = 'https://imperiogamer.vercel.app';
+const SITE_URL = 'https://imperiogamer1.vercel.app';
 
 const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsProps) => {
   const [copied, setCopied] = useState(false);
