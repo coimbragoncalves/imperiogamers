@@ -16,6 +16,9 @@ const CRAWLER_USER_AGENTS = [
   'Discordbot',
   'Googlebot',
   'bingbot',
+  'Applebot',
+  'Pinterest',
+  'Snapchat',
 ]
 
 function isCrawler(userAgent: string | null): boolean {
@@ -32,6 +35,9 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
 }
 
+// The PUBLISHED site URL - this is what Facebook will display
+const SITE_URL = 'https://imperiogamers.lovable.app'
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -41,34 +47,25 @@ Deno.serve(async (req) => {
     const url = new URL(req.url)
     const userAgent = req.headers.get('user-agent')
 
-    // Support both path-based and query-based URLs
-    // Path-based: /og-image/artigo/my-slug or /og-image/trailer/my-slug
-    // Query-based (legacy): /og-image?slug=my-slug&type=article
+    // Parse path: /og-image/artigo/slug or /og-image/trailer/slug
     let slug: string | null = null
     let type = 'article'
-    let siteUrl = 'https://imperiogamers.lovable.app'
 
     const pathParts = url.pathname.replace(/^\/og-image\/?/, '').split('/').filter(Boolean)
     
     if (pathParts.length >= 2) {
-      // Path-based: /og-image/artigo/slug or /og-image/trailer/slug
       const pathType = pathParts[0]
       slug = pathParts.slice(1).join('/')
       type = pathType === 'trailer' ? 'trailer' : 'article'
     } else if (pathParts.length === 1) {
-      // Path-based with just slug: /og-image/slug
       slug = pathParts[0]
     }
 
-    // Fallback to query params
     if (!slug) {
       slug = url.searchParams.get('slug')
     }
     if (url.searchParams.get('type')) {
       type = url.searchParams.get('type')!
-    }
-    if (url.searchParams.get('site_url')) {
-      siteUrl = url.searchParams.get('site_url')!
     }
 
     if (!slug) {
@@ -97,23 +94,20 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Build the CLEAN canonical URL (the real article page)
+    // Build clean canonical URL (what Facebook shows as the domain)
     const basePath = type === 'trailer' || article.content_type === 'trailer' ? 'trailer' : 'artigo'
-    const articleUrl = `${siteUrl}/${basePath}/${article.slug}`
+    const articleUrl = `${SITE_URL}/${basePath}/${article.slug}`
 
-    // If not a crawler, redirect to the actual page
+    // Non-crawlers: redirect to the real page
     if (!isCrawler(userAgent)) {
       return new Response(null, {
         status: 302,
-        headers: {
-          ...corsHeaders,
-          'Location': articleUrl,
-        }
+        headers: { ...corsHeaders, 'Location': articleUrl }
       })
     }
 
-    // For crawlers, serve full OG meta tags
-    const ogImage = article.cover_image || `${siteUrl}/placeholder.svg`
+    // For crawlers: serve OG meta tags HTML
+    const ogImage = article.cover_image || `${SITE_URL}/placeholder.svg`
     const title = escapeHtml(article.title)
     const description = escapeHtml(article.description || article.title)
     const siteName = 'Império Gamers'
@@ -128,7 +122,6 @@ Deno.serve(async (req) => {
   <meta name="description" content="${description}">
   <link rel="canonical" href="${articleUrl}">
   
-  <!-- Open Graph / Facebook -->
   <meta property="og:type" content="article">
   <meta property="og:url" content="${articleUrl}">
   <meta property="og:title" content="${title}">
@@ -142,11 +135,9 @@ Deno.serve(async (req) => {
   <meta property="og:image:alt" content="${title}">
   <meta property="og:site_name" content="${siteName}">
   <meta property="og:locale" content="pt_BR">
-  <meta property="article:publisher" content="${siteUrl}">
+  <meta property="article:publisher" content="${SITE_URL}">
   <meta property="article:published_time" content="${publishedTime}">
-  <meta property="fb:app_id" content="">
   
-  <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:url" content="${articleUrl}">
   <meta name="twitter:title" content="${title}">
@@ -155,7 +146,6 @@ Deno.serve(async (req) => {
   <meta name="twitter:image:alt" content="${title}">
   <meta name="twitter:site" content="@imperiogamers">
   
-  <!-- Additional SEO -->
   <meta name="robots" content="index, follow">
   <meta name="author" content="${siteName}">
 </head>
@@ -168,10 +158,12 @@ Deno.serve(async (req) => {
 </html>`
 
     return new Response(html, {
+      status: 200,
       headers: { 
         ...corsHeaders, 
         'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'public, max-age=3600, s-maxage=3600'
+        'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+        'X-Content-Type-Options': 'nosniff',
       }
     })
   } catch (error) {
