@@ -16,34 +16,28 @@ interface ShareButtonsProps {
   contentType: 'news' | 'review' | 'trailer' | 'other';
 }
 
-// Published site URL - ALWAYS use this for sharing, never preview URLs
-const SITE_URL = 'https://imperiogamers.lovable.app';
+// Published site domain - clean URL for all sharing
+const SITE_URL = 'https://imperiogamer.vercel.app';
 
 const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsProps) => {
   const [copied, setCopied] = useState(false);
   
   const basePath = contentType === 'trailer' ? 'trailer' : 'artigo';
   
-  // Clean article URL for display and copy
+  // Clean article URL - this is what gets shared everywhere
+  // Vercel Edge Middleware intercepts crawler requests and serves OG tags
   const articleUrl = `${SITE_URL}/${basePath}/${slug}`;
+  const encodedUrl = encodeURIComponent(articleUrl);
   const encodedTitle = encodeURIComponent(title);
 
-  // Edge function URL for social crawlers (hidden from user)
-  // Facebook will read og:url from response and display the clean domain
-  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'iflugdkucuitrflrgldq';
-  const ogType = contentType === 'trailer' ? 'trailer' : 'artigo';
-  const ogUrl = `https://${projectId}.supabase.co/functions/v1/og-image/${ogType}/${slug}`;
-  const encodedOgUrl = encodeURIComponent(ogUrl);
-
   const shareLinks = {
-    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}`,
-    twitter: `https://twitter.com/intent/tweet?url=${encodeURIComponent(articleUrl)}&text=${encodedTitle}`,
-    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedOgUrl}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+    twitter: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedTitle}`,
+    whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
   };
 
   const copyToClipboard = async () => {
     try {
-      // Copy the CLEAN article URL (never edge function URL)
       await navigator.clipboard.writeText(articleUrl);
       setCopied(true);
       toast.success('Link copiado!');

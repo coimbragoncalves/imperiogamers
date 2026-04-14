@@ -5,27 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const CRAWLER_USER_AGENTS = [
-  'facebookexternalhit',
-  'Facebot',
-  'Twitterbot',
-  'WhatsApp',
-  'LinkedInBot',
-  'Slackbot',
-  'TelegramBot',
-  'Discordbot',
-  'Googlebot',
-  'bingbot',
-  'Applebot',
-  'Pinterest',
-  'Snapchat',
-]
-
-function isCrawler(userAgent: string | null): boolean {
-  if (!userAgent) return true
-  return CRAWLER_USER_AGENTS.some(bot => userAgent.toLowerCase().includes(bot.toLowerCase()))
-}
-
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -35,8 +14,8 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
 }
 
-// The PUBLISHED site URL - this is what Facebook will display
-const SITE_URL = 'https://imperiogamers.lovable.app'
+// The published Vercel domain
+const SITE_URL = 'https://imperiogamer.vercel.app'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -45,7 +24,6 @@ Deno.serve(async (req) => {
 
   try {
     const url = new URL(req.url)
-    const userAgent = req.headers.get('user-agent')
 
     // Parse path: /og-image/artigo/slug or /og-image/trailer/slug
     let slug: string | null = null
@@ -94,19 +72,8 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Build clean canonical URL (what Facebook shows as the domain)
     const basePath = type === 'trailer' || article.content_type === 'trailer' ? 'trailer' : 'artigo'
     const articleUrl = `${SITE_URL}/${basePath}/${article.slug}`
-
-    // Non-crawlers: redirect to the real page
-    if (!isCrawler(userAgent)) {
-      return new Response(null, {
-        status: 302,
-        headers: { ...corsHeaders, 'Location': articleUrl }
-      })
-    }
-
-    // For crawlers: serve OG meta tags HTML
     const ogImage = article.cover_image || `${SITE_URL}/placeholder.svg`
     const title = escapeHtml(article.title)
     const description = escapeHtml(article.description || article.title)
@@ -163,7 +130,6 @@ Deno.serve(async (req) => {
         ...corsHeaders, 
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'public, max-age=3600, s-maxage=3600',
-        'X-Content-Type-Options': 'nosniff',
       }
     })
   } catch (error) {
