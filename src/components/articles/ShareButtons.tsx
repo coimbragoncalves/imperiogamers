@@ -16,35 +16,35 @@ interface ShareButtonsProps {
   contentType: 'news' | 'review' | 'trailer' | 'other';
 }
 
+// Published site URL - ALWAYS use this for sharing, never preview URLs
+const SITE_URL = 'https://imperiogamers.lovable.app';
+
 const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsProps) => {
   const [copied, setCopied] = useState(false);
   
-  const basePath = contentType === 'trailer' ? '/trailer/' : '/artigo/';
-  const currentOrigin = window.location.origin;
-  // Clean article URL - this is what users see and what Facebook displays via og:url
-  const fullUrl = `${currentOrigin}${basePath}${slug}`;
+  const basePath = contentType === 'trailer' ? 'trailer' : 'artigo';
+  
+  // Clean article URL for display and copy
+  const articleUrl = `${SITE_URL}/${basePath}/${slug}`;
   const encodedTitle = encodeURIComponent(title);
 
-  // Edge function URL for social crawlers (they need server-rendered OG tags)
-  // Uses clean path-based routing: /og-image/artigo/slug
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  // Edge function URL for social crawlers (hidden from user)
+  // Facebook will read og:url from response and display the clean domain
+  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'iflugdkucuitrflrgldq';
   const ogType = contentType === 'trailer' ? 'trailer' : 'artigo';
-  const ogUrl = `${supabaseUrl}/functions/v1/og-image/${ogType}/${slug}`;
+  const ogUrl = `https://${projectId}.supabase.co/functions/v1/og-image/${ogType}/${slug}`;
   const encodedOgUrl = encodeURIComponent(ogUrl);
 
   const shareLinks = {
-    // Social platforms use OG URL so crawlers see proper meta tags
-    // og:url inside the response points to the clean article URL
-    // So Facebook displays: imperiogamers.lovable.app (clean domain)
     facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedOgUrl}`,
-    twitter: `https://twitter.com/intent/tweet?url=${encodedOgUrl}&text=${encodedTitle}`,
+    twitter: `https://twitter.com/intent/tweet?url=${encodeURIComponent(articleUrl)}&text=${encodedTitle}`,
     whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedOgUrl}`,
   };
 
   const copyToClipboard = async () => {
     try {
-      // Copy the CLEAN article URL (not the edge function URL)
-      await navigator.clipboard.writeText(fullUrl);
+      // Copy the CLEAN article URL (never edge function URL)
+      await navigator.clipboard.writeText(articleUrl);
       setCopied(true);
       toast.success('Link copiado!');
       setTimeout(() => setCopied(false), 2000);
