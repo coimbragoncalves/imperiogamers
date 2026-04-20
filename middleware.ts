@@ -1,46 +1,66 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { next, rewrite } from '@vercel/edge';
+
+export const config = {
+  matcher: ['/artigo/:path*', '/trailer/:path*', '/noticia/:path*'],
+};
 
 const CRAWLER_USER_AGENTS = [
   'facebookexternalhit',
-  'Facebot',
-  'Twitterbot',
-  'WhatsApp',
-  'LinkedInBot',
-  'Slackbot',
-  'TelegramBot',
-  'Discordbot',
-  'Applebot',
-  'Pinterest',
-  'Snapchat',
+  'facebookcatalog',
+  'facebot',
+  'twitterbot',
+  'whatsapp',
+  'linkedinbot',
+  'slackbot',
+  'telegrambot',
+  'discordbot',
+  'applebot',
+  'pinterest',
+  'snapchat',
+  'redditbot',
+  'embedly',
+  'quora link preview',
+  'showyoubot',
+  'outbrain',
+  'vkshare',
+  'w3c_validator',
+  'baiduspider',
+  'bingbot',
+  'googlebot',
+  'yandex',
+  'iframely',
 ];
 
 function isCrawler(userAgent: string | null): boolean {
   if (!userAgent) return false;
-  return CRAWLER_USER_AGENTS.some(bot =>
-    userAgent.toLowerCase().includes(bot.toLowerCase())
-  );
+  const ua = userAgent.toLowerCase();
+  return CRAWLER_USER_AGENTS.some((bot) => ua.includes(bot));
 }
 
-export const config = {
-  matcher: ['/artigo/:path*', '/trailer/:path*'],
-};
-
-export default function middleware(req: NextRequest) {
-  const userAgent = req.headers.get('user-agent');
+export default function middleware(request: Request) {
+  const userAgent = request.headers.get('user-agent');
 
   if (!isCrawler(userAgent)) {
-    return NextResponse.next();
+    return next();
   }
 
-  // Extract type and slug from the path
-  const url = new URL(req.url);
+  const url = new URL(request.url);
   const pathParts = url.pathname.split('/').filter(Boolean);
-  // pathParts[0] = 'artigo' or 'trailer', pathParts[1...] = slug
-  const type = pathParts[0]; // 'artigo' or 'trailer'
+  // pathParts[0] = 'artigo' | 'trailer' | 'noticia'
+  // pathParts[1...] = slug
+  const rawType = pathParts[0] || 'artigo';
   const slug = pathParts.slice(1).join('/');
 
-  // Rewrite to the Supabase edge function (invisible to user/crawler)
-  const ogUrl = `https://iflugdkucuitrflrgldq.supabase.co/functions/v1/og-image/${type}/${slug}`;
+  if (!slug) {
+    return next();
+  }
 
-  return NextResponse.rewrite(ogUrl);
+  // Normalize 'noticia' -> 'artigo' for backend lookup
+  const type = rawType === 'trailer' ? 'trailer' : 'artigo';
+
+  const ogUrl = `https://iflugdkucuitrflrgldq.supabase.co/functions/v1/og-image/${type}/${encodeURIComponent(
+    slug
+  )}`;
+
+  return rewrite(ogUrl);
 }

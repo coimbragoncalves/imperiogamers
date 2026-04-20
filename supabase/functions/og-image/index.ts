@@ -29,14 +29,18 @@ Deno.serve(async (req) => {
     let slug: string | null = null
     let type = 'article'
 
-    const pathParts = url.pathname.replace(/^\/og-image\/?/, '').split('/').filter(Boolean)
-    
+    // Strip both possible prefixes: /functions/v1/og-image and /og-image
+    const cleanedPath = url.pathname
+      .replace(/^\/functions\/v1\/og-image\/?/, '')
+      .replace(/^\/og-image\/?/, '')
+    const pathParts = cleanedPath.split('/').filter(Boolean)
+
     if (pathParts.length >= 2) {
       const pathType = pathParts[0]
-      slug = pathParts.slice(1).join('/')
+      slug = decodeURIComponent(pathParts.slice(1).join('/'))
       type = pathType === 'trailer' ? 'trailer' : 'article'
     } else if (pathParts.length === 1) {
-      slug = pathParts[0]
+      slug = decodeURIComponent(pathParts[0])
     }
 
     if (!slug) {
@@ -74,9 +78,12 @@ Deno.serve(async (req) => {
 
     const basePath = type === 'trailer' || article.content_type === 'trailer' ? 'trailer' : 'artigo'
     const articleUrl = `${SITE_URL}/${basePath}/${article.slug}`
-    const ogImage = article.cover_image || `${SITE_URL}/placeholder.svg`
+    const FALLBACK_IMAGE = 'https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4297619e-5b82-49a8-a747-da8d168cc538/id-preview-1560b5fe--cb48d054-d4b5-4b7e-bbb1-833cbc111988.lovable.app-1770567716452.png'
+    const ogImage = article.cover_image && article.cover_image.startsWith('http') ? article.cover_image : FALLBACK_IMAGE
     const title = escapeHtml(article.title)
-    const description = escapeHtml(article.description || article.title)
+    const rawDescription = (article.description && article.description.trim()) || article.title
+    const trimmedDesc = rawDescription.length > 200 ? rawDescription.slice(0, 197) + '...' : rawDescription
+    const description = escapeHtml(trimmedDesc)
     const siteName = 'Império Gamers'
     const publishedTime = article.created_at || new Date().toISOString()
 
