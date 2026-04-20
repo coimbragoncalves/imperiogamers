@@ -89,8 +89,13 @@ const Article = () => {
   }
 
   const siteUrl = window.location.origin;
-  const articleUrl = `${siteUrl}/artigo/${article.slug}`;
-  const ogImage = article.cover_image || `${siteUrl}/placeholder.svg`;
+  const currentPath = window.location.pathname.startsWith('/noticia/') ? 'noticia' : 'artigo';
+  const articleUrl = `${siteUrl}/${currentPath}/${article.slug}`;
+  const ogImage = article.cover_image?.startsWith('http')
+    ? article.cover_image
+    : article.cover_image
+      ? `${siteUrl}${article.cover_image}`
+      : `${siteUrl}/placeholder.svg`;
 
   return (
     <>
@@ -103,7 +108,9 @@ const Article = () => {
         <meta property="og:url" content={articleUrl} />
         <meta property="og:title" content={article.title} />
         <meta property="og:description" content={article.description || article.title} />
-        <meta property="og:image" content={ogImage} />
+          <meta property="og:image" content={ogImage} />
+          <meta property="og:image:width" content="1200" />
+          <meta property="og:image:height" content="630" />
         <meta property="og:site_name" content="Império Gamers" />
         
         {/* Twitter */}
