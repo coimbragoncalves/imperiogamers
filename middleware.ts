@@ -1,7 +1,7 @@
 import { next, rewrite } from '@vercel/edge';
 
 export const config = {
-  matcher: ['/artigo/:path*', '/trailer/:path*', '/noticia/:path*'],
+  matcher: ['/artigo/:path*', '/trailer/:path*', '/noticia/:path*', '/api/og-debug'],
 };
 
 const CRAWLER_USER_AGENTS = [
@@ -39,12 +39,39 @@ function isCrawler(userAgent: string | null): boolean {
 
 export default function middleware(request: Request) {
   const userAgent = request.headers.get('user-agent');
+  const url = new URL(request.url);
+
+  if (url.pathname === '/api/og-debug') {
+    const slug = url.searchParams.get('slug')?.trim();
+    const rawType = url.searchParams.get('type')?.trim() || 'noticia';
+    const lookupType = rawType === 'trailer' ? 'trailer' : 'artigo';
+
+    if (!slug) {
+      return new Response(JSON.stringify({ error: 'slug is required' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+        },
+      });
+    }
+
+    const debugUrl = new URL(
+      `https://iflugdkucuitrflrgldq.supabase.co/functions/v1/og-image/${lookupType}/${encodeURIComponent(slug)}`
+    );
+    debugUrl.searchParams.set('debug', '1');
+    debugUrl.searchParams.set('pathType', rawType);
+    debugUrl.searchParams.set('originalUrl', `${url.origin}/${rawType}/${slug}`);
+
+    return rewrite(debugUrl.toString());
+  }
 
   if (!isCrawler(userAgent)) {
     return next();
   }
 
-  const url = new URL(request.url);
   const pathParts = url.pathname.split('/').filter(Boolean);
   // pathParts[0] = 'artigo' | 'trailer' | 'noticia'
   // pathParts[1...] = slug
@@ -58,9 +85,12 @@ export default function middleware(request: Request) {
   // Normalize 'noticia' -> 'artigo' for backend lookup
   const type = rawType === 'trailer' ? 'trailer' : 'artigo';
 
-  const ogUrl = `https://iflugdkucuitrflrgldq.supabase.co/functions/v1/og-image/${type}/${encodeURIComponent(
-    slug
-  )}`;
+  const originalUrl = `${url.origin}${url.pathname}${url.search}`;
+  const ogUrl = new URL(
+    `https://iflugdkucuitrflrgldq.supabase.co/functions/v1/og-image/${type}/${encodeURIComponent(slug)}`
+  );
+  ogUrl.searchParams.set('pathType', rawType);
+  ogUrl.searchParams.set('originalUrl', originalUrl);
 
-  return rewrite(ogUrl);
+  return rewrite(ogUrl.toString());
 }
