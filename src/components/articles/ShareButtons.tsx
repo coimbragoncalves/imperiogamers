@@ -23,10 +23,12 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
   const [copied, setCopied] = useState(false);
   
   const basePath = contentType === 'trailer' ? 'trailer' : 'artigo';
+  const shareVersion = Date.now();
   
   // Clean article URL - this is what gets shared everywhere
   // Vercel Edge Middleware intercepts crawler requests and serves OG tags
-  const articleUrl = `${SITE_URL}/${basePath}/${slug}`;
+  const articleUrl = `${SITE_URL}/${basePath}/${slug}?v=${shareVersion}`;
+  const canonicalArticleUrl = `${SITE_URL}/${basePath}/${slug}`;
   const encodedUrl = encodeURIComponent(articleUrl);
   const encodedTitle = encodeURIComponent(title);
 
@@ -38,7 +40,7 @@ const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsPro
 
   const copyToClipboard = async () => {
     try {
-      await navigator.clipboard.writeText(articleUrl);
+      await navigator.clipboard.writeText(canonicalArticleUrl);
       setCopied(true);
       toast.success('Link copiado!');
       setTimeout(() => setCopied(false), 2000);
