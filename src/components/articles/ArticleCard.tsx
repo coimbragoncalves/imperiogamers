@@ -40,7 +40,7 @@ const ArticleCard = ({
   createdAt,
   slug,
 }: ArticleCardProps) => {
-  const linkPath = contentType === 'trailer' ? `/trailer/${slug}` : `/artigo/${slug}`;
+  const linkPath = contentType === 'trailer' ? `/trailer/${slug}` : contentType === 'news' ? `/noticia/${slug}` : `/artigo/${slug}`;
 
   return (
     <Link to={linkPath} className="group block">

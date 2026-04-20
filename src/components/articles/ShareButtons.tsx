@@ -22,7 +22,7 @@ const SITE_URL = 'https://imperiogamer1.vercel.app';
 const ShareButtons = ({ title, description, slug, contentType }: ShareButtonsProps) => {
   const [copied, setCopied] = useState(false);
   
-  const basePath = contentType === 'trailer' ? 'trailer' : 'artigo';
+  const basePath = contentType === 'trailer' ? 'trailer' : contentType === 'news' ? 'noticia' : 'artigo';
   const shareVersion = Date.now();
   
   // Clean article URL - this is what gets shared everywhere
