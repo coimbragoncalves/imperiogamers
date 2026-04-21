@@ -17,6 +17,34 @@ interface NewsItem {
   youtubeUrl?: string;
 }
 
+// Normalize a title for fuzzy duplicate detection
+function normalizeTitle(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Word-overlap similarity (0..1) — good enough for headline near-duplicates
+function titleSimilarity(a: string, b: string): number {
+  const wa = new Set(normalizeTitle(a).split(' ').filter(w => w.length > 3));
+  const wb = new Set(normalizeTitle(b).split(' ').filter(w => w.length > 3));
+  if (wa.size === 0 || wb.size === 0) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  return inter / Math.min(wa.size, wb.size);
+}
+
+// Embed YouTube URLs / extract video id helper
+function extractYouTubeId(url?: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?\/\s]+)/);
+  return m ? m[1] : null;
+}
+
 // Patterns to identify and exclude logos from images
 const LOGO_PATTERNS = [
   /logo/i,
@@ -433,6 +461,28 @@ serve(async (req) => {
             console.log(`Already posted: ${item.sourceUrl}`);
             continue;
           }
+
+          // Also check for similar titles in recent articles (last 30 days)
+          const { data: recentArticles } = await supabase
+            .from('articles')
+            .select('title')
+            .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .limit(500);
+
+          const isDuplicateTitle = (recentArticles || []).some(
+            (a: { title: string }) => titleSimilarity(a.title, item.title) >= 0.7
+          );
+          if (isDuplicateTitle) {
+            console.log(`Skipping similar title: ${item.title}`);
+            await supabase.from('ai_post_logs').insert({
+              source_url: item.sourceUrl,
+              source_site: item.sourceSite,
+              content_type: item.contentType,
+              status: 'duplicate',
+              error_message: 'Similar title already exists'
+            });
+            continue;
+          }
         }
 
         console.log(`Processing: ${item.title}`);
@@ -449,21 +499,23 @@ serve(async (req) => {
             messages: [
               {
                 role: 'system',
-                content: `Você é um jornalista de games brasileiro do portal "Império Gamers". Reescreva notícias de games em português brasileiro de forma original e engajante. 
-                
-REGRAS IMPORTANTES:
-- Reescreva o conteúdo de forma COMPLETAMENTE ORIGINAL, não copie
-- NUNCA mencione a fonte original (sites como IGN, GameSpot, Kotaku, PC Gamer, Polygon, etc.)
-- NUNCA inclua logos, marcas ou referências visuais a outros sites
-- Use linguagem informal mas profissional, como um gamer brasileiro falaria
-- Mantenha os fatos e informações importantes do jogo/notícia
-- Crie um título atraente e original em português
-- A descrição deve ter 1-2 frases chamativas
-- O conteúdo deve ter 3-5 parágrafos em HTML puro (use <p>, <strong>, <em>)
-- Foque apenas no JOGO ou ASSUNTO da notícia, não na fonte
-- Se mencionar desenvolvedores ou publishers, cite apenas os oficiais (Nintendo, Sony, Microsoft, Ubisoft, etc.)
+                content: `Você é um jornalista profissional de games brasileiro do portal "Império Gamers". Reescreva notícias e reviews de games em português brasileiro de forma original, profunda e engajante.
 
-Responda APENAS em JSON válido com a estrutura: {"title": "...", "description": "...", "content": "<p>...</p>"}`
+REGRAS OBRIGATÓRIAS:
+- Reescreva COMPLETAMENTE ORIGINAL — nunca copie frases
+- NUNCA mencione a fonte original (IGN, GameSpot, Kotaku, PC Gamer, Polygon, FlowGames, etc.)
+- Linguagem informal mas profissional, como um gamer brasileiro experiente
+- Mantenha fatos e informações importantes do jogo/notícia
+- Título atraente e original em português (até 90 caracteres)
+- Descrição: 1-2 frases chamativas (até 200 caracteres)
+
+ESTRUTURA DO CONTEÚDO (paragraphs):
+- Devolva EXATAMENTE 4 parágrafos médios (cada um com 60-120 palavras)
+- Cada parágrafo cobre um ângulo diferente: introdução/contexto, detalhes principais, gameplay/análise, conclusão/impacto
+- Apenas TEXTO em cada parágrafo (sem HTML, sem imagens — as imagens são intercaladas pelo sistema)
+
+Responda APENAS em JSON válido com a estrutura:
+{"title": "...", "description": "...", "paragraphs": ["par1", "par2", "par3", "par4"]}`
               },
               {
                 role: 'user',
@@ -532,6 +584,37 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
           .replace(/\s+/g, '-')
           .substring(0, 100);
 
+        // Build rich HTML: 4 paragraphs interleaved with images, optional video at top
+        const paragraphs: string[] = Array.isArray(parsedContent.paragraphs) && parsedContent.paragraphs.length > 0
+          ? parsedContent.paragraphs.slice(0, 4)
+          : (typeof parsedContent.content === 'string'
+              ? parsedContent.content.replace(/<\/?[^>]+>/g, '').split(/\n+/).filter((p: string) => p.trim().length > 0).slice(0, 4)
+              : []);
+
+        // Pad to at least 4 paragraphs if AI returned fewer
+        while (paragraphs.length < 4 && paragraphs.length > 0) {
+          paragraphs.push(paragraphs[paragraphs.length - 1]);
+        }
+
+        const ytId = extractYouTubeId(item.youtubeUrl);
+        const videoEmbed = ytId
+          ? `<div class="video-embed" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;margin:1.5rem 0;border-radius:0.5rem;"><iframe src="https://www.youtube.com/embed/${ytId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div>`
+          : '';
+
+        // Pick up to 4 distinct images (skip the cover, which goes at top of the article page already)
+        const galleryImages = item.imageUrls.slice(0, 4);
+
+        const htmlParts: string[] = [];
+        if (videoEmbed) htmlParts.push(videoEmbed);
+        for (let i = 0; i < paragraphs.length; i++) {
+          htmlParts.push(`<p>${paragraphs[i]}</p>`);
+          const img = galleryImages[i];
+          if (img) {
+            htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${img}" alt="${parsedContent.title.replace(/"/g, '&quot;')}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+          }
+        }
+        const richContent = htmlParts.join('\n');
+
         // Use the first available image as cover, or skip this item entirely
         const coverImage = item.imageUrls.length > 0 ? item.imageUrls[0] : null;
         
@@ -570,7 +653,7 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
             title: parsedContent.title,
             slug: slug + '-' + Date.now(),
             description: parsedContent.description,
-            content: parsedContent.content,
+            content: richContent,
             cover_image: finalCoverImage,
             content_type: item.contentType,
             youtube_url: item.youtubeUrl || null,
@@ -642,6 +725,36 @@ Responda APENAS em JSON válido com a estrutura: {"title": "...", "description":
       .from('ai_settings')
       .update({ last_run_at: new Date().toISOString() })
       .eq('id', settings.id);
+
+    // Auto-cleanup oldest articles if enabled
+    try {
+      const { data: featSettings } = await supabase
+        .from('featured_settings')
+        .select('auto_cleanup_enabled, auto_cleanup_threshold')
+        .single();
+
+      if (featSettings?.auto_cleanup_enabled) {
+        const { count } = await supabase
+          .from('articles')
+          .select('id', { count: 'exact', head: true });
+        const threshold = featSettings.auto_cleanup_threshold || 200;
+        if ((count || 0) > threshold) {
+          const toDelete = (count || 0) - threshold;
+          const limit = Math.min(toDelete, 40);
+          const { data: oldest } = await supabase
+            .from('articles')
+            .select('id')
+            .order('created_at', { ascending: true })
+            .limit(limit);
+          if (oldest && oldest.length > 0) {
+            await supabase.from('articles').delete().in('id', oldest.map((a: { id: string }) => a.id));
+            console.log(`Auto-cleanup: removed ${oldest.length} oldest articles`);
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      console.error('Auto-cleanup error:', cleanupErr);
+    }
 
     return new Response(
       JSON.stringify({ 
