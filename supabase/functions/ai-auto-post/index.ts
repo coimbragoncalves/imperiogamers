@@ -726,6 +726,36 @@ Responda APENAS em JSON válido com a estrutura:
       .update({ last_run_at: new Date().toISOString() })
       .eq('id', settings.id);
 
+    // Auto-cleanup oldest articles if enabled
+    try {
+      const { data: featSettings } = await supabase
+        .from('featured_settings')
+        .select('auto_cleanup_enabled, auto_cleanup_threshold')
+        .single();
+
+      if (featSettings?.auto_cleanup_enabled) {
+        const { count } = await supabase
+          .from('articles')
+          .select('id', { count: 'exact', head: true });
+        const threshold = featSettings.auto_cleanup_threshold || 200;
+        if ((count || 0) > threshold) {
+          const toDelete = (count || 0) - threshold;
+          const limit = Math.min(toDelete, 40);
+          const { data: oldest } = await supabase
+            .from('articles')
+            .select('id')
+            .order('created_at', { ascending: true })
+            .limit(limit);
+          if (oldest && oldest.length > 0) {
+            await supabase.from('articles').delete().in('id', oldest.map((a: { id: string }) => a.id));
+            console.log(`Auto-cleanup: removed ${oldest.length} oldest articles`);
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      console.error('Auto-cleanup error:', cleanupErr);
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true, 
