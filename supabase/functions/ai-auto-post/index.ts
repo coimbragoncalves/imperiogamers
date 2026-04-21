@@ -461,6 +461,28 @@ serve(async (req) => {
             console.log(`Already posted: ${item.sourceUrl}`);
             continue;
           }
+
+          // Also check for similar titles in recent articles (last 30 days)
+          const { data: recentArticles } = await supabase
+            .from('articles')
+            .select('title')
+            .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+            .limit(500);
+
+          const isDuplicateTitle = (recentArticles || []).some(
+            (a: { title: string }) => titleSimilarity(a.title, item.title) >= 0.7
+          );
+          if (isDuplicateTitle) {
+            console.log(`Skipping similar title: ${item.title}`);
+            await supabase.from('ai_post_logs').insert({
+              source_url: item.sourceUrl,
+              source_site: item.sourceSite,
+              content_type: item.contentType,
+              status: 'duplicate',
+              error_message: 'Similar title already exists'
+            });
+            continue;
+          }
         }
 
         console.log(`Processing: ${item.title}`);
