@@ -162,7 +162,9 @@ export type Database = {
           created_at: string
           description: string | null
           dislikes: number
+          featured_order: number | null
           id: string
+          is_featured: boolean
           is_published: boolean
           likes: number
           slug: string
@@ -180,7 +182,9 @@ export type Database = {
           created_at?: string
           description?: string | null
           dislikes?: number
+          featured_order?: number | null
           id?: string
+          is_featured?: boolean
           is_published?: boolean
           likes?: number
           slug: string
@@ -198,7 +202,9 @@ export type Database = {
           created_at?: string
           description?: string | null
           dislikes?: number
+          featured_order?: number | null
           id?: string
+          is_featured?: boolean
           is_published?: boolean
           likes?: number
           slug?: string
@@ -303,6 +309,66 @@ export type Database = {
           title?: string
           updated_at?: string
           views?: number
+        }
+        Relationships: []
+      }
+      featured_settings: {
+        Row: {
+          auto_cleanup_enabled: boolean
+          auto_cleanup_threshold: number
+          id: string
+          slider_enabled: boolean
+          updated_at: string
+        }
+        Insert: {
+          auto_cleanup_enabled?: boolean
+          auto_cleanup_threshold?: number
+          id?: string
+          slider_enabled?: boolean
+          updated_at?: string
+        }
+        Update: {
+          auto_cleanup_enabled?: boolean
+          auto_cleanup_threshold?: number
+          id?: string
+          slider_enabled?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      featured_slides: {
+        Row: {
+          created_at: string
+          id: string
+          image_url: string
+          is_active: boolean
+          link_url: string | null
+          position: number
+          subtitle: string | null
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_url: string
+          is_active?: boolean
+          link_url?: string | null
+          position?: number
+          subtitle?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_url?: string
+          is_active?: boolean
+          link_url?: string | null
+          position?: number
+          subtitle?: string | null
+          title?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -420,6 +486,7 @@ export type Database = {
         Args: { p_guest_id: string; p_user_id: string }
         Returns: boolean
       }
+      cleanup_oldest_articles: { Args: { p_count?: number }; Returns: number }
       generate_slug: { Args: { title: string }; Returns: string }
       has_role: {
         Args: {
