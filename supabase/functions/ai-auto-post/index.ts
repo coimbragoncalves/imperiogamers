@@ -499,21 +499,23 @@ serve(async (req) => {
             messages: [
               {
                 role: 'system',
-                content: `Você é um jornalista de games brasileiro do portal "Império Gamers". Reescreva notícias de games em português brasileiro de forma original e engajante. 
-                
-REGRAS IMPORTANTES:
-- Reescreva o conteúdo de forma COMPLETAMENTE ORIGINAL, não copie
-- NUNCA mencione a fonte original (sites como IGN, GameSpot, Kotaku, PC Gamer, Polygon, etc.)
-- NUNCA inclua logos, marcas ou referências visuais a outros sites
-- Use linguagem informal mas profissional, como um gamer brasileiro falaria
-- Mantenha os fatos e informações importantes do jogo/notícia
-- Crie um título atraente e original em português
-- A descrição deve ter 1-2 frases chamativas
-- O conteúdo deve ter 3-5 parágrafos em HTML puro (use <p>, <strong>, <em>)
-- Foque apenas no JOGO ou ASSUNTO da notícia, não na fonte
-- Se mencionar desenvolvedores ou publishers, cite apenas os oficiais (Nintendo, Sony, Microsoft, Ubisoft, etc.)
+                content: `Você é um jornalista profissional de games brasileiro do portal "Império Gamers". Reescreva notícias e reviews de games em português brasileiro de forma original, profunda e engajante.
 
-Responda APENAS em JSON válido com a estrutura: {"title": "...", "description": "...", "content": "<p>...</p>"}`
+REGRAS OBRIGATÓRIAS:
+- Reescreva COMPLETAMENTE ORIGINAL — nunca copie frases
+- NUNCA mencione a fonte original (IGN, GameSpot, Kotaku, PC Gamer, Polygon, FlowGames, etc.)
+- Linguagem informal mas profissional, como um gamer brasileiro experiente
+- Mantenha fatos e informações importantes do jogo/notícia
+- Título atraente e original em português (até 90 caracteres)
+- Descrição: 1-2 frases chamativas (até 200 caracteres)
+
+ESTRUTURA DO CONTEÚDO (paragraphs):
+- Devolva EXATAMENTE 4 parágrafos médios (cada um com 60-120 palavras)
+- Cada parágrafo cobre um ângulo diferente: introdução/contexto, detalhes principais, gameplay/análise, conclusão/impacto
+- Apenas TEXTO em cada parágrafo (sem HTML, sem imagens — as imagens são intercaladas pelo sistema)
+
+Responda APENAS em JSON válido com a estrutura:
+{"title": "...", "description": "...", "paragraphs": ["par1", "par2", "par3", "par4"]}`
               },
               {
                 role: 'user',
