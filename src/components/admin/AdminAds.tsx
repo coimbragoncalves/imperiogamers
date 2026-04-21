@@ -299,6 +299,27 @@ const AdminAds = () => {
     <div>
       <h1 className="text-3xl font-display font-bold mb-8">Gerenciador de Anúncios</h1>
 
+      {/* Google AdSense status */}
+      <div className="bg-card rounded-xl border border-border p-4 mb-6 flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-green-500/15 flex items-center justify-center shrink-0">
+          <Power className="h-5 w-5 text-green-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-bold">Google AdSense</h3>
+            <Badge className="bg-green-500/15 text-green-600 hover:bg-green-500/20 border-0">
+              Ativo em todas as páginas
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            Cliente: <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">ca-pub-4163072000737375</code>
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            O script principal do AdSense está carregado globalmente no <code className="font-mono">&lt;head&gt;</code> do site, garantindo que os anúncios sejam exibidos em todas as páginas.
+          </p>
+        </div>
+      </div>
+
       <Tabs defaultValue="ads" className="mb-8">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="ads">Scripts de Anúncios</TabsTrigger>
