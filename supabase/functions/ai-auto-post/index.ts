@@ -17,6 +17,34 @@ interface NewsItem {
   youtubeUrl?: string;
 }
 
+// Normalize a title for fuzzy duplicate detection
+function normalizeTitle(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Word-overlap similarity (0..1) — good enough for headline near-duplicates
+function titleSimilarity(a: string, b: string): number {
+  const wa = new Set(normalizeTitle(a).split(' ').filter(w => w.length > 3));
+  const wb = new Set(normalizeTitle(b).split(' ').filter(w => w.length > 3));
+  if (wa.size === 0 || wb.size === 0) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  return inter / Math.min(wa.size, wb.size);
+}
+
+// Embed YouTube URLs / extract video id helper
+function extractYouTubeId(url?: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&?\/\s]+)/);
+  return m ? m[1] : null;
+}
+
 // Patterns to identify and exclude logos from images
 const LOGO_PATTERNS = [
   /logo/i,
