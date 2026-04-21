@@ -584,6 +584,37 @@ Responda APENAS em JSON válido com a estrutura:
           .replace(/\s+/g, '-')
           .substring(0, 100);
 
+        // Build rich HTML: 4 paragraphs interleaved with images, optional video at top
+        const paragraphs: string[] = Array.isArray(parsedContent.paragraphs) && parsedContent.paragraphs.length > 0
+          ? parsedContent.paragraphs.slice(0, 4)
+          : (typeof parsedContent.content === 'string'
+              ? parsedContent.content.replace(/<\/?[^>]+>/g, '').split(/\n+/).filter((p: string) => p.trim().length > 0).slice(0, 4)
+              : []);
+
+        // Pad to at least 4 paragraphs if AI returned fewer
+        while (paragraphs.length < 4 && paragraphs.length > 0) {
+          paragraphs.push(paragraphs[paragraphs.length - 1]);
+        }
+
+        const ytId = extractYouTubeId(item.youtubeUrl);
+        const videoEmbed = ytId
+          ? `<div class="video-embed" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;margin:1.5rem 0;border-radius:0.5rem;"><iframe src="https://www.youtube.com/embed/${ytId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div>`
+          : '';
+
+        // Pick up to 4 distinct images (skip the cover, which goes at top of the article page already)
+        const galleryImages = item.imageUrls.slice(0, 4);
+
+        const htmlParts: string[] = [];
+        if (videoEmbed) htmlParts.push(videoEmbed);
+        for (let i = 0; i < paragraphs.length; i++) {
+          htmlParts.push(`<p>${paragraphs[i]}</p>`);
+          const img = galleryImages[i];
+          if (img) {
+            htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${img}" alt="${parsedContent.title.replace(/"/g, '&quot;')}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+          }
+        }
+        const richContent = htmlParts.join('\n');
+
         // Use the first available image as cover, or skip this item entirely
         const coverImage = item.imageUrls.length > 0 ? item.imageUrls[0] : null;
         
@@ -622,7 +653,7 @@ Responda APENAS em JSON válido com a estrutura:
             title: parsedContent.title,
             slug: slug + '-' + Date.now(),
             description: parsedContent.description,
-            content: parsedContent.content,
+            content: richContent,
             cover_image: finalCoverImage,
             content_type: item.contentType,
             youtube_url: item.youtubeUrl || null,
