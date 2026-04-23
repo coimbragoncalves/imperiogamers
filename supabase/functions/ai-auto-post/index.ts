@@ -859,32 +859,7 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             model: 'google/gemini-3-flash-preview',
-            messages: [
-              {
-                role: 'system',
-                content: `Você é um jornalista profissional de games brasileiro do portal "Império Gamers". Reescreva notícias e reviews de games em português brasileiro de forma original, profunda e engajante.
-
-REGRAS OBRIGATÓRIAS:
-- Reescreva COMPLETAMENTE ORIGINAL — nunca copie frases
-- NUNCA mencione a fonte original (IGN, GameSpot, Kotaku, PC Gamer, Polygon, FlowGames, etc.)
-- Linguagem informal mas profissional, como um gamer brasileiro experiente
-- Mantenha fatos e informações importantes do jogo/notícia
-- Título atraente e original em português (até 90 caracteres)
-- Descrição: 1-2 frases chamativas (até 200 caracteres)
-
-ESTRUTURA DO CONTEÚDO (paragraphs):
-- Devolva EXATAMENTE 4 parágrafos médios (cada um com 60-120 palavras)
-- Cada parágrafo cobre um ângulo diferente: introdução/contexto, detalhes principais, gameplay/análise, conclusão/impacto
-- Apenas TEXTO em cada parágrafo (sem HTML, sem imagens — as imagens são intercaladas pelo sistema)
-
-Responda APENAS em JSON válido com a estrutura:
-{"title": "...", "description": "...", "paragraphs": ["par1", "par2", "par3", "par4"]}`
-              },
-              {
-                role: 'user',
-                content: `Reescreva esta notícia sobre games (ignore qualquer menção ao site fonte):\n\nTítulo original: ${item.title}\n\nConteúdo:\n${item.content.substring(0, 3000)}`
-              }
-            ],
+            messages: buildAiMessages(item),
           }),
         });
 
@@ -914,18 +889,7 @@ Responda APENAS em JSON válido com a estrutura:
         // Parse AI response
         let parsedContent;
         try {
-          // Clean the response - remove markdown code blocks if present
-          let cleanContent = aiContent.trim();
-          if (cleanContent.startsWith('```json')) {
-            cleanContent = cleanContent.slice(7);
-          }
-          if (cleanContent.startsWith('```')) {
-            cleanContent = cleanContent.slice(3);
-          }
-          if (cleanContent.endsWith('```')) {
-            cleanContent = cleanContent.slice(0, -3);
-          }
-          parsedContent = JSON.parse(cleanContent.trim());
+          parsedContent = JSON.parse(cleanAiJsonResponse(aiContent));
         } catch (parseError) {
           console.error('Failed to parse AI response:', aiContent);
           await supabase.from('ai_post_logs').insert({
@@ -938,45 +902,40 @@ Responda APENAS em JSON válido com a estrutura:
           continue;
         }
 
+        const builtContent = item.contentType === 'review'
+          ? buildReviewContent(parsedContent as Record<string, unknown>, item)
+          : buildStandardContent(parsedContent as Record<string, unknown>, item);
+
+        const isFinalDuplicate = recentPublished.some((article: { title: string; content_type: string; youtube_url: string | null }) => {
+          if (article.content_type !== item.contentType) return false;
+
+          const articleYoutubeId = extractYouTubeId(article.youtube_url);
+          if (itemYoutubeId && articleYoutubeId && itemYoutubeId === articleYoutubeId) return true;
+
+          return areLikelyDuplicateTitles(article.title, builtContent.title, item.contentType);
+        });
+
+        if (isFinalDuplicate) {
+          console.log(`Skipping AI output duplicate: ${builtContent.title}`);
+          await supabase.from('ai_post_logs').insert({
+            source_url: item.sourceUrl,
+            source_site: item.sourceSite,
+            content_type: item.contentType,
+            status: 'duplicate',
+            error_message: 'Generated title matched existing article'
+          });
+          recentSourceKeys.add(normalizedSourceUrl);
+          continue;
+        }
+
         // Generate slug
-        const slug = parsedContent.title
+        const slug = builtContent.title
           .toLowerCase()
           .normalize('NFD')
           .replace(/[\u0300-\u036f]/g, '')
           .replace(/[^a-z0-9\s-]/g, '')
           .replace(/\s+/g, '-')
           .substring(0, 100);
-
-        // Build rich HTML: 4 paragraphs interleaved with images, optional video at top
-        const paragraphs: string[] = Array.isArray(parsedContent.paragraphs) && parsedContent.paragraphs.length > 0
-          ? parsedContent.paragraphs.slice(0, 4)
-          : (typeof parsedContent.content === 'string'
-              ? parsedContent.content.replace(/<\/?[^>]+>/g, '').split(/\n+/).filter((p: string) => p.trim().length > 0).slice(0, 4)
-              : []);
-
-        // Pad to at least 4 paragraphs if AI returned fewer
-        while (paragraphs.length < 4 && paragraphs.length > 0) {
-          paragraphs.push(paragraphs[paragraphs.length - 1]);
-        }
-
-        const ytId = extractYouTubeId(item.youtubeUrl);
-        const videoEmbed = ytId
-          ? `<div class="video-embed" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;margin:1.5rem 0;border-radius:0.5rem;"><iframe src="https://www.youtube.com/embed/${ytId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div>`
-          : '';
-
-        // Pick up to 4 distinct images (skip the cover, which goes at top of the article page already)
-        const galleryImages = item.imageUrls.slice(0, 4);
-
-        const htmlParts: string[] = [];
-        if (videoEmbed) htmlParts.push(videoEmbed);
-        for (let i = 0; i < paragraphs.length; i++) {
-          htmlParts.push(`<p>${paragraphs[i]}</p>`);
-          const img = galleryImages[i];
-          if (img) {
-            htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${img}" alt="${parsedContent.title.replace(/"/g, '&quot;')}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
-          }
-        }
-        const richContent = htmlParts.join('\n');
 
         // Use the first available image as cover, or skip this item entirely
         const coverImage = item.imageUrls.length > 0 ? item.imageUrls[0] : null;
@@ -1013,10 +972,10 @@ Responda APENAS em JSON válido com a estrutura:
         const { data: article, error: articleError } = await supabase
           .from('articles')
           .insert({
-            title: parsedContent.title,
+            title: builtContent.title,
             slug: slug + '-' + Date.now(),
-            description: parsedContent.description,
-            content: richContent,
+            description: builtContent.description,
+            content: builtContent.content,
             cover_image: finalCoverImage,
             content_type: item.contentType,
             youtube_url: item.youtubeUrl || null,
@@ -1066,6 +1025,14 @@ Responda APENAS em JSON válido com a estrutura:
           article_id: article.id,
           content_type: item.contentType,
           status: 'success'
+        });
+
+        recentSourceKeys.add(normalizedSourceUrl);
+        recentPublished.unshift({
+          title: builtContent.title,
+          content_type: item.contentType,
+          youtube_url: item.youtubeUrl || null,
+          created_at: new Date().toISOString()
         });
 
         postsCreated++;
@@ -1124,7 +1091,7 @@ Responda APENAS em JSON válido com a estrutura:
         success: true, 
         message: `Created ${postsCreated} posts`,
         postsCreated,
-        itemsFound: filteredItems.length
+          itemsFound: uniqueCandidates.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
