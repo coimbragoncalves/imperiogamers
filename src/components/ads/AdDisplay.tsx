@@ -49,6 +49,8 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
 
       const wrapper = document.createElement('div');
       wrapper.setAttribute('data-ad-id', ad.id);
+      wrapper.style.minHeight = '1px';
+      wrapper.style.width = '100%';
 
       // Parse the HTML
       const tempDiv = document.createElement('div');
@@ -128,19 +130,26 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
 
         if (scriptInfo.src) {
           newScript.src = scriptInfo.src;
-          newScript.async = true;
+          // Don't force async — many ad networks (Adsterra, PropellerAds)
+          // rely on synchronous execution to inject iframes into the
+          // current parent node via document.currentScript.parentNode.
+          if (!scriptInfo.attrs['async'] && !scriptInfo.attrs['defer']) {
+            newScript.async = false;
+          }
         }
 
         if (scriptInfo.text && !scriptInfo.src) {
           newScript.textContent = scriptInfo.text;
         }
 
-        // Append to wrapper (or document head for external scripts)
-        if (scriptInfo.src) {
-          document.head.appendChild(newScript);
-        } else {
-          wrapper.appendChild(newScript);
-        }
+        // CRITICAL: Always append inside the wrapper.
+        // Most ad networks (Adsterra invoke.js, PropellerAds, banner SDKs)
+        // use document.currentScript.parentNode to know WHERE to render
+        // the iframe/banner. If the script lives in <head>, the ad is
+        // either rendered invisibly in <head> or fails silently.
+        // Popunders also work fine when injected here (they open new
+        // windows on user interaction, regardless of script location).
+        wrapper.appendChild(newScript);
       });
     });
   }, [ads]);
