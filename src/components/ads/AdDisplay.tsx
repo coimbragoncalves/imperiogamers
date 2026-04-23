@@ -31,10 +31,19 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
       if (error) throw error;
       return data as Ad[];
     },
+    staleTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const executeScripts = useCallback(() => {
-    if (!ads || ads.length === 0 || !containerRef.current) return;
+    if (!containerRef.current) return;
+
+    if (!ads || ads.length === 0) {
+      executedRef.current = '';
+      containerRef.current.innerHTML = '';
+      return;
+    }
 
     // Build a fingerprint to avoid re-executing the same scripts
     const fingerprint = ads.map(a => a.id + (a.script || '')).join('|');
@@ -157,11 +166,17 @@ const AdDisplay = ({ position, className = '' }: AdDisplayProps) => {
   useEffect(() => {
     executeScripts();
 
-    return () => {
-      // Cleanup: reset fingerprint so scripts re-execute if component remounts
-      executedRef.current = '';
-    };
+    return undefined;
   }, [executeScripts]);
+
+  useEffect(() => {
+    return () => {
+      executedRef.current = '';
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+    };
+  }, []);
 
   if (!ads || ads.length === 0) return null;
 
