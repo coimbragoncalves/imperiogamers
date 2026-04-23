@@ -163,7 +163,7 @@ const AdminAI = () => {
     setIsRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('ai-auto-post', {
-        body: { forceNew: true, postsPerType, contentTypes: selectedTypes }
+        body: { postsPerType, contentTypes: selectedTypes }
       });
       
       if (error) throw error;
