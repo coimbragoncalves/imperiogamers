@@ -706,7 +706,6 @@ serve(async (req) => {
 
     console.log(`Found ${newsItems.length} news items (before image filter)`);
 
-    // Filter out items without images - news/reviews need at least one image, trailers need youtube URL
     const filteredItems = newsItems.filter(item => {
       if (item.contentType === 'trailer') {
         return item.youtubeUrl && item.youtubeUrl.length > 0;
@@ -714,9 +713,32 @@ serve(async (req) => {
       return item.imageUrls.length > 0;
     });
 
-    console.log(`After image filter: ${filteredItems.length} items (removed ${newsItems.length - filteredItems.length} without images)`);
+    const uniqueCandidates: NewsItem[] = [];
+    const scoredCandidates = [...filteredItems].sort((a, b) => scoreItem(b) - scoreItem(a));
 
-    if (filteredItems.length === 0) {
+    for (const item of scoredCandidates) {
+      const normalizedUrl = normalizeSourceUrl(item.sourceUrl);
+      const youtubeId = extractYouTubeId(item.youtubeUrl);
+      const hasDuplicateCandidate = uniqueCandidates.some((existing) => {
+        if (existing.contentType !== item.contentType) return false;
+        if (normalizeSourceUrl(existing.sourceUrl) === normalizedUrl) return true;
+
+        const existingYoutubeId = extractYouTubeId(existing.youtubeUrl);
+        if (youtubeId && existingYoutubeId && youtubeId === existingYoutubeId) return true;
+
+        return areLikelyDuplicateTitles(existing.title, item.title, item.contentType);
+      });
+
+      if (!hasDuplicateCandidate) {
+        uniqueCandidates.push(item);
+      } else {
+        console.log(`Skipping duplicate candidate before AI: ${item.title}`);
+      }
+    }
+
+    console.log(`After image + candidate dedupe: ${uniqueCandidates.length} items (removed ${newsItems.length - uniqueCandidates.length})`);
+
+    if (uniqueCandidates.length === 0) {
       return new Response(
         JSON.stringify({ success: true, message: 'No content with images found', postsCreated: 0 }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -725,13 +747,13 @@ serve(async (req) => {
 
     // Separate content types based on selected types
     const newsOnly = contentTypes.includes('news') 
-      ? filteredItems.filter(item => item.contentType === 'news') 
+      ? uniqueCandidates.filter(item => item.contentType === 'news').sort((a, b) => scoreItem(b) - scoreItem(a))
       : [];
     const reviewsOnly = contentTypes.includes('review') 
-      ? filteredItems.filter(item => item.contentType === 'review') 
+      ? uniqueCandidates.filter(item => item.contentType === 'review').sort((a, b) => scoreItem(b) - scoreItem(a))
       : [];
     const trailersOnly = contentTypes.includes('trailer') 
-      ? filteredItems.filter(item => item.contentType === 'trailer') 
+      ? uniqueCandidates.filter(item => item.contentType === 'trailer').sort((a, b) => scoreItem(b) - scoreItem(a))
       : [];
     
     // Build the final list: postsPerType of each selected type
@@ -766,35 +788,53 @@ serve(async (req) => {
     
     console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
 
+    const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const [{ data: recentLogs }, { data: recentArticles }] = await Promise.all([
+      supabase
+        .from('ai_post_logs')
+        .select('source_url, content_type, status, created_at')
+        .gte('created_at', duplicateCutoff)
+        .in('content_type', contentTypes),
+      supabase
+        .from('articles')
+        .select('title, content_type, youtube_url, created_at')
+        .gte('created_at', duplicateCutoff)
+        .in('content_type', contentTypes)
+        .limit(1000)
+    ]);
+
+    const recentSourceKeys = new Set(
+      (recentLogs || [])
+        .filter((log: { status: string }) => ['success', 'duplicate'].includes(log.status))
+        .map((log: { source_url: string }) => normalizeSourceUrl(log.source_url))
+        .filter(Boolean)
+    );
+    const recentPublished = [...(recentArticles || [])];
+
     // Process each news item with AI
     let postsCreated = 0;
     
     for (const item of itemsToProcess) {
       try {
-        // Check if we already posted this URL (skip check if forceNew is true)
-        if (!forceNew) {
-          const { data: existingLog } = await supabase
-            .from('ai_post_logs')
-            .select('id')
-            .eq('source_url', item.sourceUrl)
-            .single();
+        const normalizedSourceUrl = normalizeSourceUrl(item.sourceUrl);
+        const itemYoutubeId = extractYouTubeId(item.youtubeUrl);
 
-          if (existingLog) {
+        if (!forceNew) {
+          if (recentSourceKeys.has(normalizedSourceUrl)) {
             console.log(`Already posted: ${item.sourceUrl}`);
             continue;
           }
 
-          // Also check for similar titles in recent articles (last 30 days)
-          const { data: recentArticles } = await supabase
-            .from('articles')
-            .select('title')
-            .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-            .limit(500);
+          const matchingArticle = recentPublished.find((article: { title: string; content_type: string; youtube_url: string | null }) => {
+            if (article.content_type !== item.contentType) return false;
 
-          const isDuplicateTitle = (recentArticles || []).some(
-            (a: { title: string }) => titleSimilarity(a.title, item.title) >= 0.7
-          );
-          if (isDuplicateTitle) {
+            const articleYoutubeId = extractYouTubeId(article.youtube_url);
+            if (itemYoutubeId && articleYoutubeId && itemYoutubeId === articleYoutubeId) return true;
+
+            return areLikelyDuplicateTitles(article.title, item.title, item.contentType);
+          });
+
+          if (matchingArticle) {
             console.log(`Skipping similar title: ${item.title}`);
             await supabase.from('ai_post_logs').insert({
               source_url: item.sourceUrl,
@@ -803,6 +843,7 @@ serve(async (req) => {
               status: 'duplicate',
               error_message: 'Similar title already exists'
             });
+            recentSourceKeys.add(normalizedSourceUrl);
             continue;
           }
         }
