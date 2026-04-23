@@ -158,6 +158,328 @@ function extractAllImages(html: string, markdown: string): string[] {
   return Array.from(images);
 }
 
+const TITLE_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'into', 'about', 'after', 'before', 'over', 'under', 'this', 'that',
+  'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'por', 'para', 'com', 'sem', 'um', 'uma',
+  'news', 'noticia', 'noticias', 'notícia', 'notícias', 'review', 'reviews', 'analise', 'analises', 'análise',
+  'análises', 'trailer', 'trailers', 'teaser', 'teasers', 'game', 'games', 'jogo', 'jogos', 'official', 'novo',
+  'nova', 'new', 'first', 'look', 'launch', 'update', 'patch', 'preview', 'hands', 'gameplay', 'video', 'vídeo',
+  'watch', 'reveals', 'revealed', 'announcement', 'announce', 'state', 'play', 'showcase', 'story', 'mode',
+  'ps5', 'ps4', 'xbox', 'switch', 'steam', 'pc', 'ign', 'gamespot', 'kotaku', 'polygon', 'pcgamer', 'gamesradar',
+  'pushsquare', 'eurogamer', 'playstation', 'xboxera', 'nintendo'
+]);
+
+function normalizeSourceUrl(url: string): string {
+  if (!url) return '';
+
+  const youtubeId = extractYouTubeId(url);
+  if (youtubeId) return `youtube:${youtubeId}`;
+
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+
+    const keepParams = new URLSearchParams();
+    for (const [key, value] of parsed.searchParams.entries()) {
+      if (/^utm_/i.test(key)) continue;
+      if (['fbclid', 'gclid', 'si', 'feature', 'ab_channel'].includes(key)) continue;
+      keepParams.append(key, value);
+    }
+
+    parsed.search = keepParams.toString() ? `?${keepParams.toString()}` : '';
+    return parsed.toString().replace(/\/$/, '').toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+function getTitleTokens(title: string, contentType: NewsItem['contentType']): string[] {
+  const genericByType = {
+    news: ['breaking'],
+    review: ['score', 'veredicto', 'opiniao', 'opinião'],
+    trailer: ['cinematic', 'launch', 'official', 'announce', 'announcement'],
+  } satisfies Record<NewsItem['contentType'], string[]>;
+
+  return normalizeTitle(title)
+    .split(' ')
+    .filter((token) => token.length > 2)
+    .filter((token) => !TITLE_STOP_WORDS.has(token))
+    .filter((token) => !genericByType[contentType].includes(token));
+}
+
+function getTitleSignature(title: string, contentType: NewsItem['contentType']): string {
+  return getTitleTokens(title, contentType).slice(0, 4).join(' ');
+}
+
+function areLikelyDuplicateTitles(a: string, b: string, contentType: NewsItem['contentType']): boolean {
+  if (!a || !b) return false;
+
+  const normalizedA = normalizeTitle(a);
+  const normalizedB = normalizeTitle(b);
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+
+  const signatureA = getTitleSignature(a, contentType);
+  const signatureB = getTitleSignature(b, contentType);
+  if (signatureA && signatureA === signatureB) return true;
+
+  const tokensA = getTitleTokens(a, contentType);
+  const tokensB = getTitleTokens(b, contentType);
+  if (!tokensA.length || !tokensB.length) {
+    return titleSimilarity(a, b) >= (contentType === 'trailer' ? 0.72 : 0.8);
+  }
+
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
+  }
+
+  const union = new Set([...setA, ...setB]).size;
+  const containment = intersection / Math.min(setA.size, setB.size);
+  const jaccard = intersection / union;
+  const minIntersection = contentType === 'trailer' ? 2 : 3;
+  const threshold = contentType === 'trailer' ? 0.67 : contentType === 'review' ? 0.72 : 0.78;
+
+  return intersection >= minIntersection && (containment >= threshold || jaccard >= threshold - 0.18);
+}
+
+function scoreItem(item: NewsItem): number {
+  const contentScore = Math.min(item.content.length, 5000) / 100;
+  const imageScore = Math.min(item.imageUrls.length, 4) * 20;
+  const descriptionScore = Math.min(item.description.length, 180) / 20;
+  const trailerScore = item.youtubeUrl ? 40 : 0;
+  return contentScore + imageScore + descriptionScore + trailerScore;
+}
+
+function cleanAiJsonResponse(content: string): string {
+  let cleanContent = content.trim();
+
+  if (cleanContent.startsWith('```json')) cleanContent = cleanContent.slice(7);
+  if (cleanContent.startsWith('```')) cleanContent = cleanContent.slice(3);
+  if (cleanContent.endsWith('```')) cleanContent = cleanContent.slice(0, -3);
+
+  return cleanContent.trim();
+}
+
+function escapeHtml(value: string): string {
+  return (value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function asText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function asList(value: unknown, max = 5): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
+function buildStandardContent(parsed: Record<string, unknown>, item: NewsItem) {
+  const title = asText(parsed.title, item.title).slice(0, 90);
+  const description = asText(parsed.description, item.description || '').slice(0, 200);
+  const headlines = asList(parsed.headlines, 4);
+  const paragraphSource = Array.isArray(parsed.paragraphs)
+    ? parsed.paragraphs
+    : [];
+
+  const paragraphs = paragraphSource
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  if (paragraphs.length === 0) {
+    throw new Error('AI returned no valid paragraphs');
+  }
+
+  while (paragraphs.length < 4) {
+    paragraphs.push(paragraphs[paragraphs.length - 1]);
+  }
+
+  const ytId = extractYouTubeId(item.youtubeUrl);
+  const galleryImages = item.imageUrls.slice(1, 5);
+  const htmlParts: string[] = [];
+
+  if (ytId) {
+    htmlParts.push(`<div class="video-embed" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;margin:1.5rem 0;border-radius:0.5rem;"><iframe src="https://www.youtube.com/embed/${ytId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div>`);
+  }
+
+  for (let index = 0; index < paragraphs.length; index++) {
+    if (headlines[index]) {
+      htmlParts.push(`<h2>${escapeHtml(headlines[index])}</h2>`);
+    }
+
+    htmlParts.push(`<p>${escapeHtml(paragraphs[index])}</p>`);
+
+    const image = galleryImages[index];
+    if (image) {
+      htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${image}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+    }
+  }
+
+  return {
+    title,
+    description,
+    content: htmlParts.join('\n'),
+  };
+}
+
+function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
+  const gameTitle = asText(parsed.gameTitle, item.title.split(/[\-|—:|]/)[0]?.trim() || item.title);
+  const title = asText(parsed.title, `${gameTitle} — Review do Império Gamers`).slice(0, 90);
+  const description = asText(parsed.description, item.description || '').slice(0, 200);
+  const intro = asText(parsed.intro, item.description || '');
+  const atmosphere = asText(parsed.atmosphere, intro);
+  const story = asText(parsed.story, intro);
+  const gameplay = asText(parsed.gameplay, intro);
+  const opinion = asText(parsed.opinion, intro);
+  const verdict = asText(parsed.verdict, 'É um jogo com ideias fortes, mas que ainda depende do perfil do jogador para brilhar de verdade.');
+  const score = asText(parsed.score, '7,0/10');
+  const shouldPlay = asText(parsed.shouldPlay, '✅ Sim — especialmente se você curte propostas autorais e experiências fora do padrão.');
+  const shouldBuyNow = asText(parsed.shouldBuyNow, '⚠️ Vale comprar agora se a proposta combinar com você e a plataforma estiver estável.');
+  const pros = asList(parsed.pros).slice(0, 5);
+  const cons = asList(parsed.cons).slice(0, 5);
+  const galleryImages = item.imageUrls.slice(1, 5);
+
+  const sectionBlocks = [
+    { heading: '🧠 Introdução', text: intro, image: galleryImages[0] },
+    { heading: '🌆 Cenário e atmosfera', text: atmosphere, image: galleryImages[1] },
+    { heading: '📜 História e narrativa', text: story, image: galleryImages[2] },
+    { heading: '⚔️ Jogabilidade e combate', text: gameplay, image: galleryImages[3] },
+  ];
+
+  const htmlParts: string[] = [
+    `<p><strong>Nossa equipe do Império Gamers jogou ${escapeHtml(gameTitle)}</strong></p>`,
+    '<p><strong>Por: Coimbra Gonçalves — adm e CEO do Império Gamers</strong></p>',
+  ];
+
+  for (const block of sectionBlocks) {
+    htmlParts.push(`<h2>${escapeHtml(block.heading)}</h2>`);
+    htmlParts.push(`<p>${escapeHtml(block.text)}</p>`);
+
+    if (block.image) {
+      htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${block.image}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+    }
+  }
+
+  if (pros.length > 0) {
+    htmlParts.push('<h2>✅ Prós</h2>');
+    htmlParts.push(`<ul>${pros.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ul>`);
+  }
+
+  if (cons.length > 0) {
+    htmlParts.push('<h2>❌ Contras</h2>');
+    htmlParts.push(`<ul>${cons.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ul>`);
+  }
+
+  htmlParts.push('<h2>🎯 Minha opinião profissional</h2>');
+  htmlParts.push(`<p>${escapeHtml(opinion)}</p>`);
+  htmlParts.push('<h2>🔥 Veredicto Final</h2>');
+  htmlParts.push(`<p><strong>Pontuação:</strong> ${escapeHtml(score)}</p>`);
+  htmlParts.push(`<p>${escapeHtml(verdict)}</p>`);
+  htmlParts.push(`<p><strong>Você deveria jogar?</strong><br />${escapeHtml(shouldPlay)}</p>`);
+  htmlParts.push(`<p><strong>Você deve comprá-lo agora?</strong><br />${escapeHtml(shouldBuyNow)}</p>`);
+  htmlParts.push('<p>Se você gostou desta análise, deixe o seu like, inscreva-se no site e acompanhe o Império Gamers para mais reviews completas.</p>');
+
+  return {
+    title,
+    description,
+    content: htmlParts.join('\n'),
+  };
+}
+
+function buildAiMessages(item: NewsItem) {
+  if (item.contentType === 'review') {
+    return [
+      {
+        role: 'system',
+        content: `Você é o crítico principal do portal Império Gamers. Crie reviews originais em português brasileiro com tom editorial profissional, sem citar a fonte original.
+
+MODELO OBRIGATÓRIO PARA REVIEWS:
+- Título no formato: "Nome do jogo — subtítulo opinativo"
+- O texto final do site terá autoria fixa do Império Gamers, então não invente outro autor
+- Descrição com 1 ou 2 frases chamativas
+- Analise atmosfera, história, gameplay, pontos fortes, pontos fracos e veredicto
+- Pode elogiar e criticar com equilíbrio, sem parecer texto promocional
+- Gere manchetes fortes e linguagem natural de portal gamer brasileiro
+
+Responda APENAS em JSON válido com esta estrutura:
+{
+  "gameTitle": "...",
+  "title": "...",
+  "description": "...",
+  "intro": "...",
+  "atmosphere": "...",
+  "story": "...",
+  "gameplay": "...",
+  "pros": ["...", "...", "...", "..."],
+  "cons": ["...", "...", "...", "..."],
+  "opinion": "...",
+  "verdict": "...",
+  "score": "6,2/10",
+  "shouldPlay": "✅ ...",
+  "shouldBuyNow": "⚠️ ..."
+}
+
+REGRAS:
+- Cada seção textual deve ter entre 80 e 160 palavras
+- Prós e contras devem ser objetivos
+- A nota precisa usar vírgula e terminar com /10
+- Nunca cite IGN, GameSpot, Kotaku, PC Gamer, Polygon ou qualquer outra fonte`
+      },
+      {
+        role: 'user',
+        content: `Produza uma review completa e original a partir deste material bruto:\n\nTítulo original: ${item.title}\n\nDescrição: ${item.description}\n\nConteúdo coletado:\n${item.content.substring(0, 3500)}`
+      }
+    ];
+  }
+
+  const editorialFocus = item.contentType === 'trailer'
+    ? 'Você está cobrindo um trailer de game. Destaque o que o vídeo revela, o clima, possíveis mecânicas, plataformas e janela de lançamento quando existirem.'
+    : 'Você está cobrindo uma notícia de games. Destaque o fato principal, o contexto, o impacto para os jogadores e os próximos passos.';
+
+  return [
+    {
+      role: 'system',
+      content: `Você é um editor do portal Império Gamers. Reescreva conteúdos de games em português brasileiro, sem copiar frases e sem citar a fonte original.
+
+${editorialFocus}
+
+REGRAS OBRIGATÓRIAS:
+- Gere uma manchete principal forte e original em português com até 90 caracteres
+- Gere uma descrição chamativa com até 200 caracteres
+- Gere 4 intertítulos curtos e escaneáveis para organizar a matéria
+- Gere 4 parágrafos médios, cada um cobrindo um ângulo diferente da pauta
+- Linguagem natural, envolvente e profissional
+- Não use HTML, markdown ou listas na resposta
+
+Responda APENAS em JSON válido com esta estrutura:
+{
+  "title": "...",
+  "description": "...",
+  "headlines": ["...", "...", "...", "..."],
+  "paragraphs": ["...", "...", "...", "..."]
+}`
+    },
+    {
+      role: 'user',
+      content: `Reescreva este conteúdo de games para o Império Gamers:\n\nTipo: ${item.contentType}\nTítulo original: ${item.title}\nDescrição: ${item.description}\nConteúdo:\n${item.content.substring(0, 3200)}`
+    }
+  ];
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
