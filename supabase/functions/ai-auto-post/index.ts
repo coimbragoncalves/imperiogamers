@@ -109,6 +109,42 @@ function isLikelyLogo(imageUrl: string): boolean {
   return false;
 }
 
+// Extract meaningful tokens from the article title for image matching.
+// Used to keep only images whose URL references the same game/topic.
+function getTopicTokens(title: string): string[] {
+  return normalizeTitle(title)
+    .split(' ')
+    .filter((t) => t.length >= 4)
+    .filter((t) => !TITLE_STOP_WORDS.has(t));
+}
+
+function imageMatchesTopic(imageUrl: string, topicTokens: string[]): boolean {
+  if (!imageUrl || topicTokens.length === 0) return false;
+  const lowered = imageUrl.toLowerCase();
+  // require at least one strong topic token to appear in the URL/path/filename
+  return topicTokens.some((t) => lowered.includes(t));
+}
+
+// Reorder images so that those whose URL contains the article's topic tokens come first.
+// If at least one matches, drop images that don't (they are likely unrelated banners).
+function rankImagesByTopic(images: string[], title: string): string[] {
+  const tokens = getTopicTokens(title);
+  if (tokens.length === 0 || images.length === 0) return images;
+
+  const matching: string[] = [];
+  const others: string[] = [];
+  for (const url of images) {
+    if (imageMatchesTopic(url, tokens)) matching.push(url);
+    else others.push(url);
+  }
+
+  // If we found topic-matching images, prefer them exclusively (max 6)
+  if (matching.length > 0) return matching.slice(0, 6);
+
+  // Otherwise keep the original list (better than nothing)
+  return others.slice(0, 6);
+}
+
 function extractAllImages(html: string, markdown: string): string[] {
   const images: Set<string> = new Set();
   
@@ -587,12 +623,13 @@ serve(async (req) => {
                   allImages.unshift(result.metadata.ogImage);
                 }
               }
-              console.log(`Found ${allImages.length} images for news: ${result.title}`);
+              const topicImages = rankImagesByTopic(allImages, result.title || '');
+              console.log(`Found ${allImages.length} images (${topicImages.length} topic-matching) for news: ${result.title}`);
               newsItems.push({
                 title: result.title || 'Untitled',
                 description: result.description || '',
                 content: result.markdown || result.description || '',
-                imageUrls: allImages,
+                imageUrls: topicImages,
                 sourceUrl: result.url,
                 sourceSite: site,
                 contentType: 'news'
@@ -633,12 +670,13 @@ serve(async (req) => {
                   allImages.unshift(result.metadata.ogImage);
                 }
               }
-              console.log(`Found ${allImages.length} images for review: ${result.title}`);
+              const topicImages = rankImagesByTopic(allImages, result.title || '');
+              console.log(`Found ${allImages.length} images (${topicImages.length} topic-matching) for review: ${result.title}`);
               newsItems.push({
                 title: result.title || 'Untitled',
                 description: result.description || '',
                 content: result.markdown || result.description || '',
-                imageUrls: allImages,
+                imageUrls: topicImages,
                 sourceUrl: result.url,
                 sourceSite: site,
                 contentType: 'review'

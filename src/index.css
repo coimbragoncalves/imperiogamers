@@ -243,3 +243,87 @@ div[style*="Edit with Lovable"],
   position: absolute !important;
   z-index: -9999 !important;
 }
+
+/* Article content typography (news, reviews, trailers) */
+.prose p {
+  text-align: justify;
+  text-justify: inter-word;
+  hyphens: auto;
+  margin-bottom: 1.25rem;
+  line-height: 1.8;
+}
+
+.prose h1,
+.prose h2,
+.prose h3 {
+  text-align: left;
+  margin-top: 2.5rem;
+  margin-bottom: 1.25rem;
+  line-height: 1.3;
+  scroll-margin-top: 5rem;
+}
+
+.prose h2 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  padding-top: 0.75rem;
+  border-top: 1px solid hsl(var(--border) / 0.5);
+}
+
+.prose h3 {
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+/* Match cover image size for inline article images */
+.prose figure,
+.prose img {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.prose figure {
+  display: block;
+}
+
+.prose figure img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 0.75rem;
+  display: block;
+}
+
+.prose figure figcaption {
+  text-align: center;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  margin-top: 0.5rem;
+}
+
+/* Pros / Cons lists need breathing room */
+.prose ul,
+.prose ol {
+  margin-top: 0.75rem;
+  margin-bottom: 2rem;
+  padding-left: 1.5rem;
+}
+
+.prose ul li,
+.prose ol li {
+  margin-bottom: 0.6rem;
+  line-height: 1.7;
+  text-align: left;
+}
+
+/* YouTube embed in article body */
+.prose .video-embed {
+  margin: 2rem 0;
+}

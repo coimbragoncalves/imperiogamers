@@ -183,7 +183,7 @@ const Trailer = () => {
 
           {/* Description */}
           {trailer.description && (
-            <p className="text-lg text-muted-foreground mb-8">
+            <p className="text-lg text-muted-foreground mb-8 text-justify leading-relaxed">
               {trailer.description}
             </p>
           )}
