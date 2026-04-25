@@ -623,12 +623,13 @@ serve(async (req) => {
                   allImages.unshift(result.metadata.ogImage);
                 }
               }
-              console.log(`Found ${allImages.length} images for news: ${result.title}`);
+              const topicImages = rankImagesByTopic(allImages, result.title || '');
+              console.log(`Found ${allImages.length} images (${topicImages.length} topic-matching) for news: ${result.title}`);
               newsItems.push({
                 title: result.title || 'Untitled',
                 description: result.description || '',
                 content: result.markdown || result.description || '',
-                imageUrls: allImages,
+                imageUrls: topicImages,
                 sourceUrl: result.url,
                 sourceSite: site,
                 contentType: 'news'
@@ -669,12 +670,13 @@ serve(async (req) => {
                   allImages.unshift(result.metadata.ogImage);
                 }
               }
-              console.log(`Found ${allImages.length} images for review: ${result.title}`);
+              const topicImages = rankImagesByTopic(allImages, result.title || '');
+              console.log(`Found ${allImages.length} images (${topicImages.length} topic-matching) for review: ${result.title}`);
               newsItems.push({
                 title: result.title || 'Untitled',
                 description: result.description || '',
                 content: result.markdown || result.description || '',
-                imageUrls: allImages,
+                imageUrls: topicImages,
                 sourceUrl: result.url,
                 sourceSite: site,
                 contentType: 'review'
