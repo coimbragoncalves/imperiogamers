@@ -85,6 +85,60 @@ const LOGO_DOMAINS = [
   'pcgamer.com/bundles',
 ];
 
+// Domains of competitor / source sites whose branded banners we never want
+// to republish. Any image hosted on these domains is rejected, even if it
+// looks like an in-article photo — it's almost always a site banner,
+// promotional strip or "related article" thumbnail of another outlet.
+const BLOCKED_IMAGE_DOMAINS = [
+  'flowgames',
+  'flow-games',
+  'flow_games',
+  'theflowgames',
+  'tecmundo',
+  'voxel',
+  'thegamer',
+  'dualshockers',
+  'gamerant',
+  'gameranx',
+  'pushsquare',
+  'nintendolife',
+  'eurogamer',
+  'rockpapershotgun',
+  'destructoid',
+  'screenrant',
+  'comicbook.com',
+  'gamesradar',
+  'gamingbolt',
+  'wccftech',
+  'videogameschronicle',
+  'vg247',
+  'gematsu',
+  'siliconera',
+  'nintendoeverything',
+  'nichegamer',
+  'gamespew',
+  'twinfinite',
+  'pcgamesn',
+  'pcgamer.com',
+  'kotaku.com',
+  'polygon.com',
+  'gamespot.com',
+  'ign.com',
+];
+
+// Visual / banner-ish path hints that strongly indicate a site banner
+// (header art, hero strip, promo, "featured-image" of another outlet, etc.)
+const BANNER_PATH_HINTS = [
+  '/header',
+  '/hero',
+  '/site-',
+  '/cover-site',
+  '/promo',
+  '/featured-image',
+  '/wp-content/uploads/sites/',
+  '/branding',
+];
+
 function isLikelyLogo(imageUrl: string): boolean {
   if (!imageUrl) return true;
   
@@ -96,6 +150,17 @@ function isLikelyLogo(imageUrl: string): boolean {
   // Check for known logo domains
   for (const domain of LOGO_DOMAINS) {
     if (imageUrl.includes(domain)) return true;
+  }
+
+  // Hard-block competitor / source-site domains entirely
+  const lowered = imageUrl.toLowerCase();
+  for (const domain of BLOCKED_IMAGE_DOMAINS) {
+    if (lowered.includes(domain)) return true;
+  }
+
+  // Block obvious banner path hints
+  for (const hint of BANNER_PATH_HINTS) {
+    if (lowered.includes(hint)) return true;
   }
   
   // Filter out very small images (often used for tracking/logos)
