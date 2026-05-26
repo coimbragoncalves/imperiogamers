@@ -1065,8 +1065,11 @@ serve(async (req) => {
 
     const newsItems: NewsItem[] = [];
 
+    // Skip site scraping entirely if only curiogame is requested
+    const needsScraping = contentTypes.some((t) => ['news', 'review'].includes(t));
+
     // Scrape each source site for latest news
-    for (const site of sourceSites) {
+    if (needsScraping) for (const site of sourceSites) {
       try {
         console.log(`Scraping ${site}...`);
         
