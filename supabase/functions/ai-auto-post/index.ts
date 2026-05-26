@@ -787,7 +787,13 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
 
   htmlParts.push('<h2>🎯 Minha opinião profissional</h2>');
   htmlParts.push(`<p>${escapeHtml(opinion)}</p>`);
+  if (galleryImages[4]) {
+    htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${galleryImages[4]}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+  }
   htmlParts.push('<h2>🔥 Veredicto Final</h2>');
+  if (galleryImages[5]) {
+    htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${galleryImages[5]}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+  }
   htmlParts.push(`<p><strong>Pontuação:</strong> ${escapeHtml(score)}</p>`);
   htmlParts.push(`<p>${escapeHtml(verdict)}</p>`);
   htmlParts.push(`<p><strong>Você deveria jogar?</strong><br />${escapeHtml(shouldPlay)}</p>`);
