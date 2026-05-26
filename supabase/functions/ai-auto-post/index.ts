@@ -759,7 +759,6 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
     { heading: '🌆 Cenário e atmosfera', text: atmosphere, image: galleryImages[1] },
     { heading: '📜 História e narrativa', text: story, image: galleryImages[2] },
     { heading: '⚔️ Jogabilidade e combate', text: gameplay, image: galleryImages[3] },
-    { heading: '🎨 Gráficos e performance', text: opinion, image: galleryImages[4] },
   ];
 
   const htmlParts: string[] = [
