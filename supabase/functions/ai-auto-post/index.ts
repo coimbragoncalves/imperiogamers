@@ -808,6 +808,35 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
 }
 
 function buildAiMessages(item: NewsItem) {
+  if (item.contentType === 'curiogame') {
+    return [
+      {
+        role: 'system',
+        content: `Você é o redator-chefe da seção "CurioGame" do portal Império Gamers — uma seção viral sobre curiosidades, bastidores, polêmicas, easter eggs, bugs lendários, jogos cancelados e fatos bizarros da história dos games. Tom divertido, envolvente, mistério controlado, linguagem gamer brasileira, altamente compartilhável.
+
+REGRAS:
+- Título chamativo e curioso, até 90 caracteres (pode usar emoji)
+- Descrição instigante até 200 caracteres
+- 5 intertítulos: gancho, contexto histórico, a curiosidade em si, reação da comunidade, conclusão divertida
+- 5 parágrafos médios (90 a 160 palavras), um por intertítulo
+- Nunca cite a fonte original. Não use HTML/markdown na resposta.
+- Mantenha sempre 100% factual; se for lenda, deixe claro como lenda.
+
+Responda APENAS em JSON válido:
+{
+  "title": "...",
+  "description": "...",
+  "headlines": ["...","...","...","...","..."],
+  "paragraphs": ["...","...","...","...","..."]
+}`,
+      },
+      {
+        role: 'user',
+        content: `Crie uma curiosidade CurioGame original sobre este tema:\n\n${item.title}\n\nContexto/pauta detalhada:\n${item.content.slice(0, 2500)}`,
+      },
+    ];
+  }
+
   if (item.contentType === 'review') {
     return [
       {
@@ -885,6 +914,80 @@ Responda APENAS em JSON válido com esta estrutura:
       content: `Reescreva este conteúdo de games para o Império Gamers:\n\nTipo: ${item.contentType}\nTítulo original: ${item.title}\nDescrição: ${item.description}\nConteúdo:\n${item.content.substring(0, 3200)}`
     }
   ];
+}
+
+function buildCurioGameContent(parsed: Record<string, unknown>, item: NewsItem) {
+  const title = asText(parsed.title, item.title).slice(0, 90);
+  const description = asText(parsed.description, item.description || '').slice(0, 200);
+  const headlines = asList(parsed.headlines, 5);
+  const paragraphs = asList(parsed.paragraphs, 5);
+  if (paragraphs.length === 0) throw new Error('CurioGame AI returned no paragraphs');
+  while (paragraphs.length < 5) paragraphs.push(paragraphs[paragraphs.length - 1]);
+  const galleryImages = item.imageUrls.slice(1, 6);
+
+  const htmlParts: string[] = [
+    `<p><span style="display:inline-block;padding:4px 12px;border-radius:9999px;background:#7c3aed;color:#fff;font-weight:700;font-size:0.8rem;">🎮 CurioGame</span></p>`,
+  ];
+  for (let i = 0; i < paragraphs.length; i++) {
+    if (headlines[i]) htmlParts.push(`<h2>${escapeHtml(headlines[i])}</h2>`);
+    htmlParts.push(`<p>${escapeHtml(paragraphs[i])}</p>`);
+    const img = galleryImages[i];
+    if (img) {
+      htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${img}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+    }
+  }
+  htmlParts.push('<p><em>Gostou desta curiosidade? Compartilhe com a galera gamer e fique de olho na seção CurioGame do Império Gamers!</em></p>');
+
+  return { title, description, content: htmlParts.join('\n') };
+}
+
+// Generate a CurioGame topic via AI (no scraping needed).
+async function generateCurioGameTopic(
+  lovableKey: string,
+  recentTitles: string[]
+): Promise<NewsItem | null> {
+  try {
+    const avoid = recentTitles.slice(0, 30).join(' | ');
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é editor de uma seção gamer de curiosidades. Sugira UMA pauta inédita e factual sobre curiosidades, bastidores, polêmicas, easter eggs, bugs lendários, jogos cancelados, lendas urbanas, censuras ou fracassos icônicos dos videogames. Responda APENAS em JSON: {"topic":"título curto da curiosidade","game":"jogo/franquia central","briefing":"3-5 parágrafos descrevendo fatos verídicos para o redator usar"}.',
+          },
+          {
+            role: 'user',
+            content: `Evite repetir estes temas já publicados: ${avoid}\n\nGere agora uma nova pauta surpreendente.`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const txt = data.choices?.[0]?.message?.content;
+    if (!txt) return null;
+    const parsed = JSON.parse(cleanAiJsonResponse(txt));
+    if (!parsed?.topic || !parsed?.briefing) return null;
+    return {
+      title: String(parsed.topic).trim(),
+      description: String(parsed.briefing).slice(0, 200),
+      content: String(parsed.briefing),
+      imageUrls: [],
+      sourceUrl: `curiogame://${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sourceSite: 'curiogame-ai',
+      contentType: 'curiogame',
+      entity: { gameTitle: String(parsed.game || parsed.topic).trim() },
+    };
+  } catch (err) {
+    console.error('generateCurioGameTopic error:', err);
+    return null;
+  }
 }
 
 serve(async (req) => {
