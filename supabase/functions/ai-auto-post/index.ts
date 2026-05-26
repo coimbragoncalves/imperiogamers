@@ -751,13 +751,15 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
   const shouldBuyNow = asText(parsed.shouldBuyNow, '⚠️ Vale comprar agora se a proposta combinar com você e a plataforma estiver estável.');
   const pros = asList(parsed.pros).slice(0, 5);
   const cons = asList(parsed.cons).slice(0, 5);
-  const galleryImages = item.imageUrls.slice(1, 5);
+  // Use a richer image pool for review sections (capa + 5 internas).
+  const galleryImages = item.imageUrls.slice(1, 7);
 
   const sectionBlocks = [
     { heading: '🧠 Introdução', text: intro, image: galleryImages[0] },
     { heading: '🌆 Cenário e atmosfera', text: atmosphere, image: galleryImages[1] },
     { heading: '📜 História e narrativa', text: story, image: galleryImages[2] },
     { heading: '⚔️ Jogabilidade e combate', text: gameplay, image: galleryImages[3] },
+    { heading: '🎨 Gráficos e performance', text: opinion, image: galleryImages[4] },
   ];
 
   const htmlParts: string[] = [
