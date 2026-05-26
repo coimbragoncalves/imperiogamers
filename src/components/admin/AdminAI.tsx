@@ -55,6 +55,7 @@ interface ContentTypes {
   news: boolean;
   review: boolean;
   trailer: boolean;
+  curiogame: boolean;
 }
 
 const AdminAI = () => {
@@ -68,6 +69,7 @@ const AdminAI = () => {
     news: true,
     review: true,
     trailer: true,
+    curiogame: false,
   });
 
   const { data: settings, isLoading: loadingSettings } = useQuery({
@@ -286,6 +288,20 @@ const AdminAI = () => {
               <Label htmlFor="trailer" className="flex items-center gap-2 cursor-pointer">
                 <Film className="h-4 w-4 text-accent" />
                 Trailers
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <Checkbox
+                id="curiogame"
+                checked={contentTypes.curiogame}
+                onCheckedChange={(checked) =>
+                  setContentTypes(prev => ({ ...prev, curiogame: checked === true }))
+                }
+              />
+              <Label htmlFor="curiogame" className="flex items-center gap-2 cursor-pointer">
+                <span className="text-base">🎮</span>
+                CurioGame
               </Label>
             </div>
           </div>
