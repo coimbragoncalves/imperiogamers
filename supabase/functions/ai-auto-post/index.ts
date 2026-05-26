@@ -1292,6 +1292,9 @@ serve(async (req) => {
     const trailersOnly = contentTypes.includes('trailer') 
       ? uniqueCandidates.filter(item => item.contentType === 'trailer').sort((a, b) => scoreItem(b) - scoreItem(a))
       : [];
+    const curioOnly = contentTypes.includes('curiogame')
+      ? uniqueCandidates.filter(item => item.contentType === 'curiogame')
+      : [];
     
     // Build the final list: postsPerType of each selected type
     const itemsToProcess: NewsItem[] = [];
@@ -1322,8 +1325,17 @@ serve(async (req) => {
         }
       }
     }
+
+    // Add up to postsPerType curiogame items (if selected)
+    if (contentTypes.includes('curiogame')) {
+      for (const item of curioOnly) {
+        if (itemsToProcess.filter(i => i.contentType === 'curiogame').length < postsPerType) {
+          itemsToProcess.push(item);
+        }
+      }
+    }
     
-    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
+    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers, ${itemsToProcess.filter(i => i.contentType === 'curiogame').length} curiogame`);
 
     const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: recentLogs }, { data: recentArticles }] = await Promise.all([
