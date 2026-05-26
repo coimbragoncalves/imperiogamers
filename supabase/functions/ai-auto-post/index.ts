@@ -1007,7 +1007,7 @@ serve(async (req) => {
         postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
       }
       if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
-        contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer'].includes(t));
+        contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer', 'curiogame'].includes(t));
       }
     } catch {
       // Corpo vazio, execução automática (cron)
