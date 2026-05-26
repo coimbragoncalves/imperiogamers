@@ -271,6 +271,293 @@ function extractAllImages(html: string, markdown: string): string[] {
   return Array.from(images);
 }
 
+// =====================================================================
+// IMAGE ENRICHMENT PIPELINE
+// Goal: never publish a post with no / wrong / unrelated images.
+// 1) Validate URL (HEAD, dimensions when available)
+// 2) Search Firecrawl for "<game> screenshot/keyart/gameplay"
+// 3) AI image generation as last resort (uploaded to Supabase storage)
+// =====================================================================
+
+const TRUSTED_IMAGE_DOMAINS = [
+  'store.steampowered.com',
+  'steamstatic.com',
+  'akamaihd.net',
+  'media.rawg.io',
+  'blog.playstation.com',
+  'gmedia.playstation.com',
+  'news.xbox.com',
+  'compass-ssl.xbox.com',
+  'assets.nintendo.com',
+  'nintendo.com',
+  'epicgames.com',
+  'cdn2.unrealengine.com',
+  'cdn1.epicgames.com',
+  'wikipedia.org',
+  'wikimedia.org',
+  'img.youtube.com',
+  'i.ytimg.com',
+];
+
+function isTrustedImageDomain(url: string): boolean {
+  const lowered = url.toLowerCase();
+  return TRUSTED_IMAGE_DOMAINS.some((d) => lowered.includes(d));
+}
+
+async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean> {
+  if (!url) return false;
+  if (url.startsWith('data:')) return false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) return false;
+    const len = parseInt(res.headers.get('content-length') || '0', 10);
+    // Reject tiny tracker/icon images (< 8KB)
+    if (len > 0 && len < 8000) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Use Gemini to extract the main entity (game / franchise / characters)
+// from the article so we can search images that truly match the topic.
+async function extractTopicEntity(
+  item: { title: string; description: string; content: string },
+  lovableKey: string
+): Promise<TopicEntity | null> {
+  try {
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract the main video game / franchise from the text. Respond ONLY with compact JSON: {"gameTitle":"...","franchise":"...","characters":["..."],"studio":"...","keywords":["..."]}. If nothing identifiable, return {"gameTitle":""}.',
+          },
+          {
+            role: 'user',
+            content: `Title: ${item.title}\nDescription: ${item.description}\nContent:\n${(item.content || '').slice(0, 1800)}`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const txt = data.choices?.[0]?.message?.content;
+    if (!txt) return null;
+    const parsed = JSON.parse(cleanAiJsonResponse(txt));
+    if (!parsed?.gameTitle) return null;
+    return {
+      gameTitle: String(parsed.gameTitle).trim(),
+      franchise: parsed.franchise ? String(parsed.franchise).trim() : undefined,
+      characters: Array.isArray(parsed.characters) ? parsed.characters.slice(0, 6).map(String) : [],
+      studio: parsed.studio ? String(parsed.studio).trim() : undefined,
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 8).map(String) : [],
+    };
+  } catch (err) {
+    console.error('extractTopicEntity error:', err);
+    return null;
+  }
+}
+
+// Search Firecrawl /v1/search with scrape so we get images from each result.
+async function searchImagesFor(
+  query: string,
+  firecrawlKey: string,
+  limit = 4
+): Promise<string[]> {
+  try {
+    const res = await fetch('https://api.firecrawl.dev/v1/search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        limit,
+        scrapeOptions: { formats: ['html'] },
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.success || !Array.isArray(data.data)) return [];
+
+    const collected: string[] = [];
+    for (const r of data.data) {
+      const ogImage = r.metadata?.ogImage;
+      if (ogImage && !isLikelyLogo(ogImage)) collected.push(ogImage);
+      const imgs = extractAllImages(r.html || '', r.markdown || '');
+      for (const u of imgs) collected.push(u);
+    }
+    // Prefer trusted-domain images first
+    const trusted = collected.filter(isTrustedImageDomain);
+    const others = collected.filter((u) => !isTrustedImageDomain(u));
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const u of [...trusted, ...others]) {
+      if (!seen.has(u)) {
+        seen.add(u);
+        out.push(u);
+      }
+    }
+    return out.slice(0, 12);
+  } catch (err) {
+    console.error('searchImagesFor error:', err);
+    return [];
+  }
+}
+
+// Generate an AI image as final fallback, upload to the 'uploads' bucket,
+// and return the public URL. Returns null on failure.
+async function generateAndUploadImage(
+  prompt: string,
+  lovableKey: string,
+  supabase: ReturnType<typeof createClient>
+): Promise<string | null> {
+  try {
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash-image',
+        messages: [
+          {
+            role: 'user',
+            content: `Cinematic, high quality 16:9 promotional artwork. ${prompt}. Photorealistic gaming key art style. No text, no watermarks.`,
+          },
+        ],
+        modalities: ['image', 'text'],
+      }),
+    });
+    if (!res.ok) {
+      console.error('AI image generation failed:', res.status);
+      return null;
+    }
+    const data = await res.json();
+    // Extract data URL from the response
+    const msg = data.choices?.[0]?.message;
+    let dataUrl: string | null = null;
+    if (typeof msg?.content === 'string' && msg.content.startsWith('data:image/')) {
+      dataUrl = msg.content;
+    } else if (Array.isArray(msg?.content)) {
+      for (const part of msg.content) {
+        if (part?.type === 'image_url' && part?.image_url?.url?.startsWith('data:image/')) {
+          dataUrl = part.image_url.url;
+          break;
+        }
+      }
+    } else if (msg?.images?.[0]?.image_url?.url?.startsWith('data:image/')) {
+      dataUrl = msg.images[0].image_url.url;
+    }
+    if (!dataUrl) return null;
+
+    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+    if (!match) return null;
+    const mime = match[1];
+    const ext = mime.split('/')[1] || 'png';
+    const b64 = match[2];
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const path = `ai-generated/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
+    const { error: uploadErr } = await supabase.storage.from('uploads').upload(path, bytes, {
+      contentType: mime,
+      upsert: false,
+    });
+    if (uploadErr) {
+      console.error('Upload AI image error:', uploadErr);
+      return null;
+    }
+    const { data: pub } = supabase.storage.from('uploads').getPublicUrl(path);
+    return pub.publicUrl;
+  } catch (err) {
+    console.error('generateAndUploadImage error:', err);
+    return null;
+  }
+}
+
+// Orchestrator: ensure item has enough relevant images.
+async function enrichImagePool(
+  item: NewsItem,
+  firecrawlKey: string,
+  lovableKey: string,
+  supabase: ReturnType<typeof createClient>,
+  minImages = 5
+): Promise<void> {
+  // 1) keep what we have, dedupe, validate URLs
+  const seen = new Set<string>();
+  const validated: string[] = [];
+  for (const u of item.imageUrls) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    // Trust youtube thumbs without HEAD
+    if (u.includes('img.youtube.com') || u.includes('ytimg.com')) {
+      validated.push(u);
+      continue;
+    }
+    if (await validateImageUrl(u)) validated.push(u);
+  }
+  item.imageUrls = validated;
+
+  if (item.imageUrls.length >= minImages) return;
+
+  // 2) firecrawl image search using entity if available
+  const game = item.entity?.gameTitle || item.title;
+  const queries = item.contentType === 'review'
+    ? [
+        `"${game}" key art official`,
+        `"${game}" gameplay screenshot 4k`,
+        `"${game}" cinematic cutscene`,
+        `"${game}" combat screenshot`,
+        `"${game}" environment screenshot`,
+      ]
+    : [
+        `"${game}" official key art screenshot`,
+        `"${game}" gameplay screenshot`,
+        `"${game}" press kit image`,
+      ];
+
+  for (const q of queries) {
+    if (item.imageUrls.length >= minImages) break;
+    const found = await searchImagesFor(q, firecrawlKey);
+    for (const u of found) {
+      if (item.imageUrls.length >= minImages + 2) break;
+      if (seen.has(u)) continue;
+      if (isLikelyLogo(u)) continue;
+      const ok = isTrustedImageDomain(u) ? true : await validateImageUrl(u);
+      if (!ok) continue;
+      seen.add(u);
+      item.imageUrls.push(u);
+    }
+  }
+
+  // 3) AI fallback for cover if STILL empty
+  if (item.imageUrls.length === 0) {
+    const aiUrl = await generateAndUploadImage(
+      `Promotional artwork for the video game "${game}". Dramatic lighting, epic composition.`,
+      lovableKey,
+      supabase
+    );
+    if (aiUrl) item.imageUrls.push(aiUrl);
+  }
+}
+
+// =====================================================================
+// END IMAGE ENRICHMENT PIPELINE
+// =====================================================================
+
 const TITLE_STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'about', 'after', 'before', 'over', 'under', 'this', 'that',
   'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'por', 'para', 'com', 'sem', 'um', 'uma',
