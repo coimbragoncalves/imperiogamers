@@ -13,8 +13,20 @@ interface NewsItem {
   imageUrls: string[]; // Array of all available images
   sourceUrl: string;
   sourceSite: string;
-  contentType: 'news' | 'review' | 'trailer';
+  contentType: 'news' | 'review' | 'trailer' | 'curiogame';
   youtubeUrl?: string;
+  // Optional entity extracted from the content (game name / franchise / etc.)
+  entity?: TopicEntity;
+  // Optional per-section images for reviews (already validated)
+  sectionImages?: string[];
+}
+
+interface TopicEntity {
+  gameTitle: string;
+  franchise?: string;
+  characters?: string[];
+  studio?: string;
+  keywords?: string[];
 }
 
 // Normalize a title for fuzzy duplicate detection
