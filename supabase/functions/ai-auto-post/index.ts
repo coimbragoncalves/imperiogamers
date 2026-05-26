@@ -1168,7 +1168,7 @@ serve(async (req) => {
     }
 
     // Search for trailers from YouTube channels
-    for (const channel of youtubeChannels) {
+    if (contentTypes.includes('trailer')) for (const channel of youtubeChannels) {
       try {
         console.log(`Searching trailers from ${channel}...`);
         
@@ -1219,12 +1219,34 @@ serve(async (req) => {
       }
     }
 
+    // Generate CurioGame topics (no scraping needed)
+    if (contentTypes.includes('curiogame')) {
+      console.log('Generating CurioGame topics...');
+      // Pull recent curiogame titles to avoid repetition
+      const { data: recentCurio } = await supabase
+        .from('articles')
+        .select('title')
+        .eq('content_type', 'curiogame')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      const recentTitles = (recentCurio || []).map((r: { title: string }) => r.title);
+      for (let i = 0; i < postsPerType * 2; i++) {
+        const topic = await generateCurioGameTopic(lovableKey, recentTitles);
+        if (topic) {
+          newsItems.push(topic);
+          recentTitles.unshift(topic.title);
+        }
+      }
+    }
+
     console.log(`Found ${newsItems.length} news items (before image filter)`);
 
     const filteredItems = newsItems.filter(item => {
       if (item.contentType === 'trailer') {
         return item.youtubeUrl && item.youtubeUrl.length > 0;
       }
+      // curiogame doesn't need pre-existing images — they get enriched later
+      if (item.contentType === 'curiogame') return true;
       return item.imageUrls.length > 0;
     });
 
