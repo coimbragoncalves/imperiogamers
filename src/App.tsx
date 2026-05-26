@@ -10,6 +10,7 @@ import Auth from "./pages/Auth";
 import News from "./pages/News";
 import Reviews from "./pages/Reviews";
 import Trailers from "./pages/Trailers";
+import CurioGame from "./pages/CurioGame";
 import Downloads from "./pages/Downloads";
 import Download from "./pages/Download";
 import Article from "./pages/Article";
@@ -33,6 +34,7 @@ const App = () => (
               <Route path="/noticias" element={<News />} />
               <Route path="/reviews" element={<Reviews />} />
               <Route path="/trailers" element={<Trailers />} />
+              <Route path="/curiogame" element={<CurioGame />} />
               <Route path="/diversos" element={<Downloads />} />
               <Route path="/diversos/:id" element={<Download />} />
               <Route path="/artigo/:slug" element={<Article />} />
