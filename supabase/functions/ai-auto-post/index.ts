@@ -13,8 +13,20 @@ interface NewsItem {
   imageUrls: string[]; // Array of all available images
   sourceUrl: string;
   sourceSite: string;
-  contentType: 'news' | 'review' | 'trailer';
+  contentType: 'news' | 'review' | 'trailer' | 'curiogame';
   youtubeUrl?: string;
+  // Optional entity extracted from the content (game name / franchise / etc.)
+  entity?: TopicEntity;
+  // Optional per-section images for reviews (already validated)
+  sectionImages?: string[];
+}
+
+interface TopicEntity {
+  gameTitle: string;
+  franchise?: string;
+  characters?: string[];
+  studio?: string;
+  keywords?: string[];
 }
 
 // Normalize a title for fuzzy duplicate detection
@@ -259,6 +271,293 @@ function extractAllImages(html: string, markdown: string): string[] {
   return Array.from(images);
 }
 
+// =====================================================================
+// IMAGE ENRICHMENT PIPELINE
+// Goal: never publish a post with no / wrong / unrelated images.
+// 1) Validate URL (HEAD, dimensions when available)
+// 2) Search Firecrawl for "<game> screenshot/keyart/gameplay"
+// 3) AI image generation as last resort (uploaded to Supabase storage)
+// =====================================================================
+
+const TRUSTED_IMAGE_DOMAINS = [
+  'store.steampowered.com',
+  'steamstatic.com',
+  'akamaihd.net',
+  'media.rawg.io',
+  'blog.playstation.com',
+  'gmedia.playstation.com',
+  'news.xbox.com',
+  'compass-ssl.xbox.com',
+  'assets.nintendo.com',
+  'nintendo.com',
+  'epicgames.com',
+  'cdn2.unrealengine.com',
+  'cdn1.epicgames.com',
+  'wikipedia.org',
+  'wikimedia.org',
+  'img.youtube.com',
+  'i.ytimg.com',
+];
+
+function isTrustedImageDomain(url: string): boolean {
+  const lowered = url.toLowerCase();
+  return TRUSTED_IMAGE_DOMAINS.some((d) => lowered.includes(d));
+}
+
+async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean> {
+  if (!url) return false;
+  if (url.startsWith('data:')) return false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) return false;
+    const len = parseInt(res.headers.get('content-length') || '0', 10);
+    // Reject tiny tracker/icon images (< 8KB)
+    if (len > 0 && len < 8000) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Use Gemini to extract the main entity (game / franchise / characters)
+// from the article so we can search images that truly match the topic.
+async function extractTopicEntity(
+  item: { title: string; description: string; content: string },
+  lovableKey: string
+): Promise<TopicEntity | null> {
+  try {
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract the main video game / franchise from the text. Respond ONLY with compact JSON: {"gameTitle":"...","franchise":"...","characters":["..."],"studio":"...","keywords":["..."]}. If nothing identifiable, return {"gameTitle":""}.',
+          },
+          {
+            role: 'user',
+            content: `Title: ${item.title}\nDescription: ${item.description}\nContent:\n${(item.content || '').slice(0, 1800)}`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const txt = data.choices?.[0]?.message?.content;
+    if (!txt) return null;
+    const parsed = JSON.parse(cleanAiJsonResponse(txt));
+    if (!parsed?.gameTitle) return null;
+    return {
+      gameTitle: String(parsed.gameTitle).trim(),
+      franchise: parsed.franchise ? String(parsed.franchise).trim() : undefined,
+      characters: Array.isArray(parsed.characters) ? parsed.characters.slice(0, 6).map(String) : [],
+      studio: parsed.studio ? String(parsed.studio).trim() : undefined,
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 8).map(String) : [],
+    };
+  } catch (err) {
+    console.error('extractTopicEntity error:', err);
+    return null;
+  }
+}
+
+// Search Firecrawl /v1/search with scrape so we get images from each result.
+async function searchImagesFor(
+  query: string,
+  firecrawlKey: string,
+  limit = 4
+): Promise<string[]> {
+  try {
+    const res = await fetch('https://api.firecrawl.dev/v1/search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        limit,
+        scrapeOptions: { formats: ['html'] },
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.success || !Array.isArray(data.data)) return [];
+
+    const collected: string[] = [];
+    for (const r of data.data) {
+      const ogImage = r.metadata?.ogImage;
+      if (ogImage && !isLikelyLogo(ogImage)) collected.push(ogImage);
+      const imgs = extractAllImages(r.html || '', r.markdown || '');
+      for (const u of imgs) collected.push(u);
+    }
+    // Prefer trusted-domain images first
+    const trusted = collected.filter(isTrustedImageDomain);
+    const others = collected.filter((u) => !isTrustedImageDomain(u));
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const u of [...trusted, ...others]) {
+      if (!seen.has(u)) {
+        seen.add(u);
+        out.push(u);
+      }
+    }
+    return out.slice(0, 12);
+  } catch (err) {
+    console.error('searchImagesFor error:', err);
+    return [];
+  }
+}
+
+// Generate an AI image as final fallback, upload to the 'uploads' bucket,
+// and return the public URL. Returns null on failure.
+async function generateAndUploadImage(
+  prompt: string,
+  lovableKey: string,
+  supabase: ReturnType<typeof createClient>
+): Promise<string | null> {
+  try {
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash-image',
+        messages: [
+          {
+            role: 'user',
+            content: `Cinematic, high quality 16:9 promotional artwork. ${prompt}. Photorealistic gaming key art style. No text, no watermarks.`,
+          },
+        ],
+        modalities: ['image', 'text'],
+      }),
+    });
+    if (!res.ok) {
+      console.error('AI image generation failed:', res.status);
+      return null;
+    }
+    const data = await res.json();
+    // Extract data URL from the response
+    const msg = data.choices?.[0]?.message;
+    let dataUrl: string | null = null;
+    if (typeof msg?.content === 'string' && msg.content.startsWith('data:image/')) {
+      dataUrl = msg.content;
+    } else if (Array.isArray(msg?.content)) {
+      for (const part of msg.content) {
+        if (part?.type === 'image_url' && part?.image_url?.url?.startsWith('data:image/')) {
+          dataUrl = part.image_url.url;
+          break;
+        }
+      }
+    } else if (msg?.images?.[0]?.image_url?.url?.startsWith('data:image/')) {
+      dataUrl = msg.images[0].image_url.url;
+    }
+    if (!dataUrl) return null;
+
+    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+    if (!match) return null;
+    const mime = match[1];
+    const ext = mime.split('/')[1] || 'png';
+    const b64 = match[2];
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const path = `ai-generated/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
+    const { error: uploadErr } = await supabase.storage.from('uploads').upload(path, bytes, {
+      contentType: mime,
+      upsert: false,
+    });
+    if (uploadErr) {
+      console.error('Upload AI image error:', uploadErr);
+      return null;
+    }
+    const { data: pub } = supabase.storage.from('uploads').getPublicUrl(path);
+    return pub.publicUrl;
+  } catch (err) {
+    console.error('generateAndUploadImage error:', err);
+    return null;
+  }
+}
+
+// Orchestrator: ensure item has enough relevant images.
+async function enrichImagePool(
+  item: NewsItem,
+  firecrawlKey: string,
+  lovableKey: string,
+  supabase: ReturnType<typeof createClient>,
+  minImages = 5
+): Promise<void> {
+  // 1) keep what we have, dedupe, validate URLs
+  const seen = new Set<string>();
+  const validated: string[] = [];
+  for (const u of item.imageUrls) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    // Trust youtube thumbs without HEAD
+    if (u.includes('img.youtube.com') || u.includes('ytimg.com')) {
+      validated.push(u);
+      continue;
+    }
+    if (await validateImageUrl(u)) validated.push(u);
+  }
+  item.imageUrls = validated;
+
+  if (item.imageUrls.length >= minImages) return;
+
+  // 2) firecrawl image search using entity if available
+  const game = item.entity?.gameTitle || item.title;
+  const queries = item.contentType === 'review'
+    ? [
+        `"${game}" key art official`,
+        `"${game}" gameplay screenshot 4k`,
+        `"${game}" cinematic cutscene`,
+        `"${game}" combat screenshot`,
+        `"${game}" environment screenshot`,
+      ]
+    : [
+        `"${game}" official key art screenshot`,
+        `"${game}" gameplay screenshot`,
+        `"${game}" press kit image`,
+      ];
+
+  for (const q of queries) {
+    if (item.imageUrls.length >= minImages) break;
+    const found = await searchImagesFor(q, firecrawlKey);
+    for (const u of found) {
+      if (item.imageUrls.length >= minImages + 2) break;
+      if (seen.has(u)) continue;
+      if (isLikelyLogo(u)) continue;
+      const ok = isTrustedImageDomain(u) ? true : await validateImageUrl(u);
+      if (!ok) continue;
+      seen.add(u);
+      item.imageUrls.push(u);
+    }
+  }
+
+  // 3) AI fallback for cover if STILL empty
+  if (item.imageUrls.length === 0) {
+    const aiUrl = await generateAndUploadImage(
+      `Promotional artwork for the video game "${game}". Dramatic lighting, epic composition.`,
+      lovableKey,
+      supabase
+    );
+    if (aiUrl) item.imageUrls.push(aiUrl);
+  }
+}
+
+// =====================================================================
+// END IMAGE ENRICHMENT PIPELINE
+// =====================================================================
+
 const TITLE_STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'into', 'about', 'after', 'before', 'over', 'under', 'this', 'that',
   'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'por', 'para', 'com', 'sem', 'um', 'uma',
@@ -452,7 +751,8 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
   const shouldBuyNow = asText(parsed.shouldBuyNow, '⚠️ Vale comprar agora se a proposta combinar com você e a plataforma estiver estável.');
   const pros = asList(parsed.pros).slice(0, 5);
   const cons = asList(parsed.cons).slice(0, 5);
-  const galleryImages = item.imageUrls.slice(1, 5);
+  // Use a richer image pool for review sections (capa + 5 internas).
+  const galleryImages = item.imageUrls.slice(1, 7);
 
   const sectionBlocks = [
     { heading: '🧠 Introdução', text: intro, image: galleryImages[0] },
@@ -487,7 +787,13 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
 
   htmlParts.push('<h2>🎯 Minha opinião profissional</h2>');
   htmlParts.push(`<p>${escapeHtml(opinion)}</p>`);
+  if (galleryImages[4]) {
+    htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${galleryImages[4]}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+  }
   htmlParts.push('<h2>🔥 Veredicto Final</h2>');
+  if (galleryImages[5]) {
+    htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${galleryImages[5]}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+  }
   htmlParts.push(`<p><strong>Pontuação:</strong> ${escapeHtml(score)}</p>`);
   htmlParts.push(`<p>${escapeHtml(verdict)}</p>`);
   htmlParts.push(`<p><strong>Você deveria jogar?</strong><br />${escapeHtml(shouldPlay)}</p>`);
@@ -502,6 +808,35 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
 }
 
 function buildAiMessages(item: NewsItem) {
+  if (item.contentType === 'curiogame') {
+    return [
+      {
+        role: 'system',
+        content: `Você é o redator-chefe da seção "CurioGame" do portal Império Gamers — uma seção viral sobre curiosidades, bastidores, polêmicas, easter eggs, bugs lendários, jogos cancelados e fatos bizarros da história dos games. Tom divertido, envolvente, mistério controlado, linguagem gamer brasileira, altamente compartilhável.
+
+REGRAS:
+- Título chamativo e curioso, até 90 caracteres (pode usar emoji)
+- Descrição instigante até 200 caracteres
+- 5 intertítulos: gancho, contexto histórico, a curiosidade em si, reação da comunidade, conclusão divertida
+- 5 parágrafos médios (90 a 160 palavras), um por intertítulo
+- Nunca cite a fonte original. Não use HTML/markdown na resposta.
+- Mantenha sempre 100% factual; se for lenda, deixe claro como lenda.
+
+Responda APENAS em JSON válido:
+{
+  "title": "...",
+  "description": "...",
+  "headlines": ["...","...","...","...","..."],
+  "paragraphs": ["...","...","...","...","..."]
+}`,
+      },
+      {
+        role: 'user',
+        content: `Crie uma curiosidade CurioGame original sobre este tema:\n\n${item.title}\n\nContexto/pauta detalhada:\n${item.content.slice(0, 2500)}`,
+      },
+    ];
+  }
+
   if (item.contentType === 'review') {
     return [
       {
@@ -581,6 +916,80 @@ Responda APENAS em JSON válido com esta estrutura:
   ];
 }
 
+function buildCurioGameContent(parsed: Record<string, unknown>, item: NewsItem) {
+  const title = asText(parsed.title, item.title).slice(0, 90);
+  const description = asText(parsed.description, item.description || '').slice(0, 200);
+  const headlines = asList(parsed.headlines, 5);
+  const paragraphs = asList(parsed.paragraphs, 5);
+  if (paragraphs.length === 0) throw new Error('CurioGame AI returned no paragraphs');
+  while (paragraphs.length < 5) paragraphs.push(paragraphs[paragraphs.length - 1]);
+  const galleryImages = item.imageUrls.slice(1, 6);
+
+  const htmlParts: string[] = [
+    `<p><span style="display:inline-block;padding:4px 12px;border-radius:9999px;background:#7c3aed;color:#fff;font-weight:700;font-size:0.8rem;">🎮 CurioGame</span></p>`,
+  ];
+  for (let i = 0; i < paragraphs.length; i++) {
+    if (headlines[i]) htmlParts.push(`<h2>${escapeHtml(headlines[i])}</h2>`);
+    htmlParts.push(`<p>${escapeHtml(paragraphs[i])}</p>`);
+    const img = galleryImages[i];
+    if (img) {
+      htmlParts.push(`<figure style="margin:1.5rem 0;"><img src="${img}" alt="${escapeHtml(title)}" style="width:100%;height:auto;border-radius:0.5rem;" loading="lazy" /></figure>`);
+    }
+  }
+  htmlParts.push('<p><em>Gostou desta curiosidade? Compartilhe com a galera gamer e fique de olho na seção CurioGame do Império Gamers!</em></p>');
+
+  return { title, description, content: htmlParts.join('\n') };
+}
+
+// Generate a CurioGame topic via AI (no scraping needed).
+async function generateCurioGameTopic(
+  lovableKey: string,
+  recentTitles: string[]
+): Promise<NewsItem | null> {
+  try {
+    const avoid = recentTitles.slice(0, 30).join(' | ');
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é editor de uma seção gamer de curiosidades. Sugira UMA pauta inédita e factual sobre curiosidades, bastidores, polêmicas, easter eggs, bugs lendários, jogos cancelados, lendas urbanas, censuras ou fracassos icônicos dos videogames. Responda APENAS em JSON: {"topic":"título curto da curiosidade","game":"jogo/franquia central","briefing":"3-5 parágrafos descrevendo fatos verídicos para o redator usar"}.',
+          },
+          {
+            role: 'user',
+            content: `Evite repetir estes temas já publicados: ${avoid}\n\nGere agora uma nova pauta surpreendente.`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const txt = data.choices?.[0]?.message?.content;
+    if (!txt) return null;
+    const parsed = JSON.parse(cleanAiJsonResponse(txt));
+    if (!parsed?.topic || !parsed?.briefing) return null;
+    return {
+      title: String(parsed.topic).trim(),
+      description: String(parsed.briefing).slice(0, 200),
+      content: String(parsed.briefing),
+      imageUrls: [],
+      sourceUrl: `curiogame://${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sourceSite: 'curiogame-ai',
+      contentType: 'curiogame',
+      entity: { gameTitle: String(parsed.game || parsed.topic).trim() },
+    };
+  } catch (err) {
+    console.error('generateCurioGameTopic error:', err);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -598,7 +1007,7 @@ serve(async (req) => {
         postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
       }
       if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
-        contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer'].includes(t));
+        contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer', 'curiogame'].includes(t));
       }
     } catch {
       // Corpo vazio, execução automática (cron)
@@ -656,8 +1065,11 @@ serve(async (req) => {
 
     const newsItems: NewsItem[] = [];
 
+    // Skip site scraping entirely if only curiogame is requested
+    const needsScraping = contentTypes.some((t) => ['news', 'review'].includes(t));
+
     // Scrape each source site for latest news
-    for (const site of sourceSites) {
+    if (needsScraping) for (const site of sourceSites) {
       try {
         console.log(`Scraping ${site}...`);
         
@@ -756,7 +1168,7 @@ serve(async (req) => {
     }
 
     // Search for trailers from YouTube channels
-    for (const channel of youtubeChannels) {
+    if (contentTypes.includes('trailer')) for (const channel of youtubeChannels) {
       try {
         console.log(`Searching trailers from ${channel}...`);
         
@@ -807,12 +1219,34 @@ serve(async (req) => {
       }
     }
 
+    // Generate CurioGame topics (no scraping needed)
+    if (contentTypes.includes('curiogame')) {
+      console.log('Generating CurioGame topics...');
+      // Pull recent curiogame titles to avoid repetition
+      const { data: recentCurio } = await supabase
+        .from('articles')
+        .select('title')
+        .eq('content_type', 'curiogame')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      const recentTitles = (recentCurio || []).map((r: { title: string }) => r.title);
+      for (let i = 0; i < postsPerType * 2; i++) {
+        const topic = await generateCurioGameTopic(lovableKey, recentTitles);
+        if (topic) {
+          newsItems.push(topic);
+          recentTitles.unshift(topic.title);
+        }
+      }
+    }
+
     console.log(`Found ${newsItems.length} news items (before image filter)`);
 
     const filteredItems = newsItems.filter(item => {
       if (item.contentType === 'trailer') {
         return item.youtubeUrl && item.youtubeUrl.length > 0;
       }
+      // curiogame doesn't need pre-existing images — they get enriched later
+      if (item.contentType === 'curiogame') return true;
       return item.imageUrls.length > 0;
     });
 
@@ -858,6 +1292,9 @@ serve(async (req) => {
     const trailersOnly = contentTypes.includes('trailer') 
       ? uniqueCandidates.filter(item => item.contentType === 'trailer').sort((a, b) => scoreItem(b) - scoreItem(a))
       : [];
+    const curioOnly = contentTypes.includes('curiogame')
+      ? uniqueCandidates.filter(item => item.contentType === 'curiogame')
+      : [];
     
     // Build the final list: postsPerType of each selected type
     const itemsToProcess: NewsItem[] = [];
@@ -888,8 +1325,17 @@ serve(async (req) => {
         }
       }
     }
+
+    // Add up to postsPerType curiogame items (if selected)
+    if (contentTypes.includes('curiogame')) {
+      for (const item of curioOnly) {
+        if (itemsToProcess.filter(i => i.contentType === 'curiogame').length < postsPerType) {
+          itemsToProcess.push(item);
+        }
+      }
+    }
     
-    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers`);
+    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers, ${itemsToProcess.filter(i => i.contentType === 'curiogame').length} curiogame`);
 
     const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: recentLogs }, { data: recentArticles }] = await Promise.all([
@@ -953,6 +1399,19 @@ serve(async (req) => {
 
         console.log(`Processing: ${item.title}`);
 
+        // ===== IMAGE ENRICHMENT =====
+        // Extract topic entity for better image searches (skip for trailers which use YouTube thumb)
+        if (item.contentType !== 'trailer' && !item.entity) {
+          item.entity = (await extractTopicEntity(item, lovableKey)) || undefined;
+        }
+        // Ensure we have a strong, validated image pool
+        if (item.contentType !== 'trailer') {
+          const minImages = item.contentType === 'review' ? 6 : item.contentType === 'curiogame' ? 6 : 3;
+          await enrichImagePool(item, firecrawlKey, lovableKey, supabase, minImages);
+          console.log(`Image pool for "${item.title}": ${item.imageUrls.length} images`);
+        }
+        // ===== END IMAGE ENRICHMENT =====
+
         // Use AI to rewrite the content in Portuguese
         const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
@@ -1007,7 +1466,9 @@ serve(async (req) => {
 
         const builtContent = item.contentType === 'review'
           ? buildReviewContent(parsedContent as Record<string, unknown>, item)
-          : buildStandardContent(parsedContent as Record<string, unknown>, item);
+          : item.contentType === 'curiogame'
+            ? buildCurioGameContent(parsedContent as Record<string, unknown>, item)
+            : buildStandardContent(parsedContent as Record<string, unknown>, item);
 
         const isFinalDuplicate = recentPublished.some((article: { title: string; content_type: string; youtube_url: string | null }) => {
           if (article.content_type !== item.contentType) return false;

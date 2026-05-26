@@ -21,6 +21,7 @@ const Header = () => {
     { label: 'Notícias', href: '/noticias' },
     { label: 'Reviews', href: '/reviews' },
     { label: 'Trailers', href: '/trailers' },
+    { label: 'CurioGame', href: '/curiogame' },
     { label: 'Diversos', href: '/diversos' },
   ];
 
