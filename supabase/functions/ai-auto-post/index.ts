@@ -1399,6 +1399,19 @@ serve(async (req) => {
 
         console.log(`Processing: ${item.title}`);
 
+        // ===== IMAGE ENRICHMENT =====
+        // Extract topic entity for better image searches (skip for trailers which use YouTube thumb)
+        if (item.contentType !== 'trailer' && !item.entity) {
+          item.entity = (await extractTopicEntity(item, lovableKey)) || undefined;
+        }
+        // Ensure we have a strong, validated image pool
+        if (item.contentType !== 'trailer') {
+          const minImages = item.contentType === 'review' ? 6 : item.contentType === 'curiogame' ? 6 : 3;
+          await enrichImagePool(item, firecrawlKey, lovableKey, supabase, minImages);
+          console.log(`Image pool for "${item.title}": ${item.imageUrls.length} images`);
+        }
+        // ===== END IMAGE ENRICHMENT =====
+
         // Use AI to rewrite the content in Portuguese
         const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
@@ -1453,7 +1466,9 @@ serve(async (req) => {
 
         const builtContent = item.contentType === 'review'
           ? buildReviewContent(parsedContent as Record<string, unknown>, item)
-          : buildStandardContent(parsedContent as Record<string, unknown>, item);
+          : item.contentType === 'curiogame'
+            ? buildCurioGameContent(parsedContent as Record<string, unknown>, item)
+            : buildStandardContent(parsedContent as Record<string, unknown>, item);
 
         const isFinalDuplicate = recentPublished.some((article: { title: string; content_type: string; youtube_url: string | null }) => {
           if (article.content_type !== item.contentType) return false;
