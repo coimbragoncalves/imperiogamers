@@ -598,6 +598,7 @@ function getTitleTokens(title: string, contentType: NewsItem['contentType']): st
     news: ['breaking'],
     review: ['score', 'veredicto', 'opiniao', 'opinião'],
     trailer: ['cinematic', 'launch', 'official', 'announce', 'announcement'],
+    curiogame: ['curiosidade', 'segredo', 'easter', 'egg', 'fato', 'curioso'],
   } satisfies Record<NewsItem['contentType'], string[]>;
 
   return normalizeTitle(title)
