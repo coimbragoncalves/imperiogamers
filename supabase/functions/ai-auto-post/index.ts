@@ -598,6 +598,7 @@ function getTitleTokens(title: string, contentType: NewsItem['contentType']): st
     news: ['breaking'],
     review: ['score', 'veredicto', 'opiniao', 'opinião'],
     trailer: ['cinematic', 'launch', 'official', 'announce', 'announcement'],
+    curiogame: ['curiosidade', 'segredo', 'easter', 'egg', 'fato', 'curioso'],
   } satisfies Record<NewsItem['contentType'], string[]>;
 
   return normalizeTitle(title)
@@ -1000,9 +1001,11 @@ serve(async (req) => {
     let forceNew = false;
     let postsPerType = 3; // Default: 3 posts per type
     let contentTypes: string[] = ['news', 'review', 'trailer']; // Default: all types
+    let manualRun = false;
     try {
       const body = await req.json();
       forceNew = body?.forceNew === true;
+      manualRun = body?.manual === true || forceNew;
       if (body?.postsPerType && typeof body.postsPerType === 'number') {
         postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
       }
@@ -1051,7 +1054,8 @@ serve(async (req) => {
       );
     }
 
-    if (!settings.is_enabled) {
+    // Manual runs (admin "Executar Agora") bypass the is_enabled flag
+    if (!settings.is_enabled && !manualRun) {
       return new Response(
         JSON.stringify({ success: false, error: 'AI auto-posting is disabled' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
