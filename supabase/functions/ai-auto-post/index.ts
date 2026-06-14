@@ -1087,7 +1087,29 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
   const pros = asList(parsed.pros).slice(0, 5);
   const cons = asList(parsed.cons).slice(0, 5);
   // Use a richer image pool for review sections (capa + 5 internas).
-  const galleryImages = item.imageUrls.slice(1, 7);
+  // Prefer category-aware selection when imageMeta is available.
+  const pool: ImageMeta[] = (item.imageMeta || []).slice(1); // skip cover
+  const fallbackGallery = item.imageUrls.slice(1, 7);
+  const used = new Set<string>();
+  const pick = (prefs: ImageCategory[]): string | undefined => {
+    for (const p of prefs) {
+      const hit = pool.find((m) => !used.has(m.url) && m.category === p);
+      if (hit) { used.add(hit.url); return hit.url; }
+    }
+    const any = pool.find((m) => !used.has(m.url));
+    if (any) { used.add(any.url); return any.url; }
+    const fb = fallbackGallery.find((u) => !used.has(u));
+    if (fb) { used.add(fb); return fb; }
+    return undefined;
+  };
+  const galleryImages = [
+    pick(['character', 'promo']),
+    pick(['environment', 'world']),
+    pick(['cutscene', 'character']),
+    pick(['combat', 'boss']),
+    pick(['cinematic', 'world']),
+    pick(['promo', 'cinematic']),
+  ];
 
   const sectionBlocks = [
     { heading: '🧠 Introdução', text: intro, image: galleryImages[0] },
