@@ -19,6 +19,8 @@ interface NewsItem {
   entity?: TopicEntity;
   // Optional per-section images for reviews (already validated)
   sectionImages?: string[];
+  // Rich metadata per image (filled by image pipeline)
+  imageMeta?: ImageMeta[];
 }
 
 interface TopicEntity {
@@ -27,6 +29,18 @@ interface TopicEntity {
   characters?: string[];
   studio?: string;
   keywords?: string[];
+}
+
+type ImageCategory =
+  | 'combat' | 'world' | 'character' | 'cutscene' | 'ui'
+  | 'environment' | 'boss' | 'cinematic' | 'promo' | 'other';
+
+interface ImageMeta {
+  url: string;
+  category: ImageCategory;
+  score: number;
+  source: string;
+  validated: boolean;
 }
 
 // Normalize a title for fuzzy duplicate detection
