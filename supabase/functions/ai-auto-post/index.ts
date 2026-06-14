@@ -510,62 +510,7 @@ async function enrichImagePool(
   supabase: ReturnType<typeof createClient>,
   minImages = 5
 ): Promise<void> {
-  // 1) keep what we have, dedupe, validate URLs
-  const seen = new Set<string>();
-  const validated: string[] = [];
-  for (const u of item.imageUrls) {
-    if (seen.has(u)) continue;
-    seen.add(u);
-    // Trust youtube thumbs without HEAD
-    if (u.includes('img.youtube.com') || u.includes('ytimg.com')) {
-      validated.push(u);
-      continue;
-    }
-    if (await validateImageUrl(u)) validated.push(u);
-  }
-  item.imageUrls = validated;
-
-  if (item.imageUrls.length >= minImages) return;
-
-  // 2) firecrawl image search using entity if available
-  const game = item.entity?.gameTitle || item.title;
-  const queries = item.contentType === 'review'
-    ? [
-        `"${game}" key art official`,
-        `"${game}" gameplay screenshot 4k`,
-        `"${game}" cinematic cutscene`,
-        `"${game}" combat screenshot`,
-        `"${game}" environment screenshot`,
-      ]
-    : [
-        `"${game}" official key art screenshot`,
-        `"${game}" gameplay screenshot`,
-        `"${game}" press kit image`,
-      ];
-
-  for (const q of queries) {
-    if (item.imageUrls.length >= minImages) break;
-    const found = await searchImagesFor(q, firecrawlKey);
-    for (const u of found) {
-      if (item.imageUrls.length >= minImages + 2) break;
-      if (seen.has(u)) continue;
-      if (isLikelyLogo(u)) continue;
-      const ok = isTrustedImageDomain(u) ? true : await validateImageUrl(u);
-      if (!ok) continue;
-      seen.add(u);
-      item.imageUrls.push(u);
-    }
-  }
-
-  // 3) AI fallback for cover if STILL empty
-  if (item.imageUrls.length === 0) {
-    const aiUrl = await generateAndUploadImage(
-      `Promotional artwork for the video game "${game}". Dramatic lighting, epic composition.`,
-      lovableKey,
-      supabase
-    );
-    if (aiUrl) item.imageUrls.push(aiUrl);
-  }
+  await runImagePipeline(item, firecrawlKey, lovableKey, supabase, minImages);
 }
 
 // =====================================================================
