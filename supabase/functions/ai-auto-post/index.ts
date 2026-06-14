@@ -19,6 +19,8 @@ interface NewsItem {
   entity?: TopicEntity;
   // Optional per-section images for reviews (already validated)
   sectionImages?: string[];
+  // Rich metadata per image (filled by image pipeline)
+  imageMeta?: ImageMeta[];
 }
 
 interface TopicEntity {
@@ -27,6 +29,18 @@ interface TopicEntity {
   characters?: string[];
   studio?: string;
   keywords?: string[];
+}
+
+type ImageCategory =
+  | 'combat' | 'world' | 'character' | 'cutscene' | 'ui'
+  | 'environment' | 'boss' | 'cinematic' | 'promo' | 'other';
+
+interface ImageMeta {
+  url: string;
+  category: ImageCategory;
+  score: number;
+  source: string;
+  validated: boolean;
 }
 
 // Normalize a title for fuzzy duplicate detection
@@ -496,62 +510,382 @@ async function enrichImagePool(
   supabase: ReturnType<typeof createClient>,
   minImages = 5
 ): Promise<void> {
-  // 1) keep what we have, dedupe, validate URLs
-  const seen = new Set<string>();
-  const validated: string[] = [];
-  for (const u of item.imageUrls) {
-    if (seen.has(u)) continue;
-    seen.add(u);
-    // Trust youtube thumbs without HEAD
-    if (u.includes('img.youtube.com') || u.includes('ytimg.com')) {
-      validated.push(u);
-      continue;
-    }
-    if (await validateImageUrl(u)) validated.push(u);
+  await runImagePipeline(item, firecrawlKey, lovableKey, supabase, minImages);
+}
+
+// =====================================================================
+// PROFESSIONAL IMAGE PIPELINE
+// RAWG -> IGDB -> Steam -> MobyGames -> GiantBomb -> Firecrawl(Bing/Google)
+// + Gemini Vision validation + categorization + bucket upload
+// =====================================================================
+
+const OFFICIAL_DOMAINS_BONUS = [
+  'steamstatic', 'steampowered', 'akamai.steamstatic',
+  'igdb.com', 'rawg.io', 'media.rawg.io',
+  'mobygames.com', 'giantbomb.com',
+  'blog.playstation', 'news.xbox', 'nintendo.com', 'epicgames.com',
+];
+
+function slugForUpload(s: string): string {
+  return (s || 'post')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'post';
+}
+
+async function shortHash(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-1', buf);
+  return Array.from(new Uint8Array(digest)).slice(0, 4).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function categorizeFromUrl(url: string, alt = ''): ImageCategory {
+  const s = (url + ' ' + alt).toLowerCase();
+  if (/combat|battle|fight|attack/.test(s)) return 'combat';
+  if (/boss/.test(s)) return 'boss';
+  if (/cutscene|cinematic|cinema/.test(s)) return 'cutscene';
+  if (/character|protagonist|hero|villain|portrait/.test(s)) return 'character';
+  if (/world|map|landscape|open[-_]?world/.test(s)) return 'world';
+  if (/environment|scenery|forest|city|town|biome/.test(s)) return 'environment';
+  if (/ui|hud|menu|interface|inventory/.test(s)) return 'ui';
+  if (/key[-_ ]?art|cover|poster|promo|wallpaper|header/.test(s)) return 'promo';
+  return 'other';
+}
+
+function scoreCandidate(url: string, entity: TopicEntity | undefined, source: string): number {
+  let score = 0;
+  const lowered = url.toLowerCase();
+  if (entity?.gameTitle) {
+    const slug = entity.gameTitle.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (slug && lowered.replace(/[^a-z0-9]/g, '').includes(slug)) score += 40;
   }
-  item.imageUrls = validated;
+  if (entity?.franchise) {
+    const slug = entity.franchise.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (slug && lowered.replace(/[^a-z0-9]/g, '').includes(slug)) score += 20;
+  }
+  for (const c of entity?.characters || []) {
+    const slug = c.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (slug && lowered.replace(/[^a-z0-9]/g, '').includes(slug)) { score += 15; break; }
+  }
+  if (OFFICIAL_DOMAINS_BONUS.some((d) => lowered.includes(d))) score += 25;
+  if (['rawg', 'igdb', 'steam', 'mobygames', 'giantbomb'].includes(source)) score += 30;
+  return score;
+}
 
-  if (item.imageUrls.length >= minImages) return;
+async function safeFetchJson(url: string, init?: RequestInit, timeoutMs = 8000): Promise<any | null> {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), timeoutMs);
+    const r = await fetch(url, { ...init, signal: c.signal });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
 
-  // 2) firecrawl image search using entity if available
+async function fetchSteamImages(game: string): Promise<string[]> {
+  if (!game) return [];
+  const search = await safeFetchJson(
+    `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(game)}&l=en&cc=us`
+  );
+  const appid = search?.items?.[0]?.id;
+  if (!appid) return [];
+  const det = await safeFetchJson(
+    `https://store.steampowered.com/api/appdetails?appids=${appid}&l=en`
+  );
+  const data = det?.[String(appid)]?.data;
+  if (!data) return [];
+  const urls: string[] = [];
+  if (data.header_image) urls.push(data.header_image);
+  if (data.background_raw) urls.push(data.background_raw);
+  for (const ss of (data.screenshots || [])) {
+    if (ss.path_full) urls.push(ss.path_full);
+  }
+  return urls;
+}
+
+async function fetchRawgImages(game: string): Promise<string[]> {
+  const key = Deno.env.get('RAWG_API_KEY');
+  if (!key || !game) return [];
+  const search = await safeFetchJson(
+    `https://api.rawg.io/api/games?key=${key}&search=${encodeURIComponent(game)}&page_size=1`
+  );
+  const g = search?.results?.[0];
+  if (!g?.id) return [];
+  const urls: string[] = [];
+  if (g.background_image) urls.push(g.background_image);
+  if (g.background_image_additional) urls.push(g.background_image_additional);
+  const ss = await safeFetchJson(`https://api.rawg.io/api/games/${g.id}/screenshots?key=${key}`);
+  for (const s of (ss?.results || [])) if (s.image) urls.push(s.image);
+  return urls;
+}
+
+let igdbTokenCache: { token: string; exp: number } | null = null;
+async function getIgdbToken(): Promise<{ id: string; token: string } | null> {
+  const id = Deno.env.get('TWITCH_CLIENT_ID');
+  const secret = Deno.env.get('TWITCH_CLIENT_SECRET');
+  if (!id || !secret) return null;
+  if (igdbTokenCache && Date.now() < igdbTokenCache.exp) return { id, token: igdbTokenCache.token };
+  const r = await safeFetchJson(
+    `https://id.twitch.tv/oauth2/token?client_id=${id}&client_secret=${secret}&grant_type=client_credentials`,
+    { method: 'POST' }
+  );
+  if (!r?.access_token) return null;
+  igdbTokenCache = { token: r.access_token, exp: Date.now() + (r.expires_in - 60) * 1000 };
+  return { id, token: r.access_token };
+}
+
+async function fetchIgdbImages(game: string): Promise<string[]> {
+  const cred = await getIgdbToken();
+  if (!cred || !game) return [];
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 8000);
+    const r = await fetch('https://api.igdb.com/v4/games', {
+      method: 'POST',
+      headers: {
+        'Client-ID': cred.id,
+        'Authorization': `Bearer ${cred.token}`,
+        'Content-Type': 'text/plain',
+      },
+      body: `search "${game.replace(/"/g, '')}"; fields name,cover.image_id,screenshots.image_id,artworks.image_id; limit 1;`,
+      signal: c.signal,
+    });
+    clearTimeout(t);
+    if (!r.ok) return [];
+    const arr = await r.json();
+    const g = arr?.[0];
+    if (!g) return [];
+    const urls: string[] = [];
+    if (g.cover?.image_id) urls.push(`https://images.igdb.com/igdb/image/upload/t_1080p/${g.cover.image_id}.jpg`);
+    for (const s of (g.screenshots || [])) urls.push(`https://images.igdb.com/igdb/image/upload/t_1080p/${s.image_id}.jpg`);
+    for (const a of (g.artworks || [])) urls.push(`https://images.igdb.com/igdb/image/upload/t_1080p/${a.image_id}.jpg`);
+    return urls;
+  } catch { return []; }
+}
+
+async function fetchMobyGamesImages(game: string): Promise<string[]> {
+  const key = Deno.env.get('MOBYGAMES_API_KEY');
+  if (!key || !game) return [];
+  const s = await safeFetchJson(`https://api.mobygames.com/v1/games?api_key=${key}&title=${encodeURIComponent(game)}&limit=1`);
+  const gid = s?.games?.[0]?.game_id;
+  if (!gid) return [];
+  const ss = await safeFetchJson(`https://api.mobygames.com/v1/games/${gid}/screenshots?api_key=${key}`);
+  return (ss?.screenshots || []).map((x: any) => x.image).filter(Boolean);
+}
+
+async function fetchGiantBombImages(game: string): Promise<string[]> {
+  const key = Deno.env.get('GIANTBOMB_API_KEY');
+  if (!key || !game) return [];
+  const s = await safeFetchJson(
+    `https://www.giantbomb.com/api/search/?api_key=${key}&format=json&query=${encodeURIComponent(game)}&resources=game&limit=1`,
+    { headers: { 'User-Agent': 'ImperioGamers/1.0' } }
+  );
+  const g = s?.results?.[0];
+  if (!g) return [];
+  const urls: string[] = [];
+  if (g.image?.super_url) urls.push(g.image.super_url);
+  if (g.image?.original_url) urls.push(g.image.original_url);
+  return urls;
+}
+
+async function validateImageWithVision(
+  url: string,
+  entity: TopicEntity | undefined,
+  lovableKey: string
+): Promise<{ match: boolean; confidence: number; category: ImageCategory } | null> {
+  if (!entity?.gameTitle) return null;
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 12000);
+    const r = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${lovableKey}`, 'Content-Type': 'application/json' },
+      signal: c.signal,
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: `Esta imagem é claramente do jogo "${entity.gameTitle}"${entity.franchise ? ` (franquia ${entity.franchise})` : ''}? Procure logo, HUD, personagens, estilo visual. Responda APENAS JSON: {"match":true|false,"confidence":0-100,"category":"combat|world|character|cutscene|ui|environment|boss|cinematic|promo|other"}` },
+            { type: 'image_url', image_url: { url } },
+          ],
+        }],
+      }),
+    });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const txt = d.choices?.[0]?.message?.content;
+    if (!txt) return null;
+    const p = JSON.parse(cleanAiJsonResponse(txt));
+    return {
+      match: !!p.match,
+      confidence: Number(p.confidence) || 0,
+      category: (p.category as ImageCategory) || 'other',
+    };
+  } catch { return null; }
+}
+
+async function downloadAndStoreImage(
+  url: string,
+  supabase: ReturnType<typeof createClient>,
+  titleHint: string,
+  category: ImageCategory
+): Promise<string | null> {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 10000);
+    const r = await fetch(url, { signal: c.signal });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const ct = r.headers.get('content-type') || 'image/jpeg';
+    if (!ct.startsWith('image/')) return null;
+    const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (buf.byteLength < 8000) return null;
+    const slug = slugForUpload(titleHint);
+    const h = await shortHash(url);
+    const path = `articles/${slug}/${category}-${h}.${ext}`;
+    const up = await supabase.storage.from('uploads').upload(path, buf, { contentType: ct, upsert: true });
+    if (up.error) { console.error('upload error', up.error); return null; }
+    const pub = supabase.storage.from('uploads').getPublicUrl(path);
+    return pub.data?.publicUrl || null;
+  } catch (e) { console.error('downloadAndStoreImage', e); return null; }
+}
+
+async function collectCandidates(
+  item: NewsItem,
+  firecrawlKey: string
+): Promise<Array<{ url: string; source: string }>> {
   const game = item.entity?.gameTitle || item.title;
-  const queries = item.contentType === 'review'
-    ? [
-        `"${game}" key art official`,
-        `"${game}" gameplay screenshot 4k`,
-        `"${game}" cinematic cutscene`,
-        `"${game}" combat screenshot`,
-        `"${game}" environment screenshot`,
-      ]
-    : [
-        `"${game}" official key art screenshot`,
-        `"${game}" gameplay screenshot`,
-        `"${game}" press kit image`,
-      ];
+  const out: Array<{ url: string; source: string }> = [];
+  const push = (urls: string[], src: string) => {
+    for (const u of urls) if (u && !isLikelyLogo(u)) out.push({ url: u, source: src });
+  };
 
-  for (const q of queries) {
-    if (item.imageUrls.length >= minImages) break;
-    const found = await searchImagesFor(q, firecrawlKey);
-    for (const u of found) {
-      if (item.imageUrls.length >= minImages + 2) break;
-      if (seen.has(u)) continue;
-      if (isLikelyLogo(u)) continue;
-      const ok = isTrustedImageDomain(u) ? true : await validateImageUrl(u);
-      if (!ok) continue;
-      seen.add(u);
-      item.imageUrls.push(u);
+  // Existing scraped images (lowest priority but free)
+  push(item.imageUrls || [], 'source');
+
+  // Parallel calls to official sources
+  const [steam, rawg, igdb, moby, gb] = await Promise.all([
+    fetchSteamImages(game).catch(() => []),
+    fetchRawgImages(game).catch(() => []),
+    fetchIgdbImages(game).catch(() => []),
+    fetchMobyGamesImages(game).catch(() => []),
+    fetchGiantBombImages(game).catch(() => []),
+  ]);
+  push(steam, 'steam');
+  push(rawg, 'rawg');
+  push(igdb, 'igdb');
+  push(moby, 'mobygames');
+  push(gb, 'giantbomb');
+
+  // Firecrawl fallback if pool is small
+  if (out.length < 8 && firecrawlKey) {
+    const queries = [
+      `"${game}" official key art screenshot`,
+      `"${game}" gameplay screenshot 4k`,
+      `"${game}" cinematic cutscene`,
+    ];
+    for (const q of queries) {
+      const found = await searchImagesFor(q, firecrawlKey).catch(() => [] as string[]);
+      push(found, 'firecrawl');
+      if (out.length >= 12) break;
     }
   }
 
-  // 3) AI fallback for cover if STILL empty
-  if (item.imageUrls.length === 0) {
-    const aiUrl = await generateAndUploadImage(
-      `Promotional artwork for the video game "${game}". Dramatic lighting, epic composition.`,
-      lovableKey,
-      supabase
-    );
-    if (aiUrl) item.imageUrls.push(aiUrl);
+  // Dedupe
+  const seen = new Set<string>();
+  return out.filter(({ url }) => {
+    const k = url.split('?')[0];
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+async function runImagePipeline(
+  item: NewsItem,
+  firecrawlKey: string,
+  lovableKey: string,
+  supabase: ReturnType<typeof createClient>,
+  minImages: number
+): Promise<void> {
+  // 1) Collect from all sources in parallel
+  const candidates = await collectCandidates(item, firecrawlKey);
+
+  // 2) Score + technical filter
+  const scored: ImageMeta[] = [];
+  for (const cand of candidates) {
+    if (isLikelyLogo(cand.url)) continue;
+    const trusted = isTrustedImageDomain(cand.url) ||
+      ['steam', 'rawg', 'igdb', 'mobygames', 'giantbomb'].includes(cand.source);
+    const ok = trusted ? true : await validateImageUrl(cand.url);
+    if (!ok) continue;
+    const score = scoreCandidate(cand.url, item.entity, cand.source);
+    if (score < 25) continue;
+    scored.push({
+      url: cand.url,
+      category: categorizeFromUrl(cand.url),
+      score,
+      source: cand.source,
+      validated: false,
+    });
+    if (scored.length >= 24) break;
   }
+  scored.sort((a, b) => b.score - a.score);
+
+  // 3) Vision-validate the top candidate (cover) — try top 3 until we get a valid one
+  let cover: ImageMeta | null = null;
+  if (item.entity?.gameTitle) {
+    for (const cand of scored.slice(0, 3)) {
+      const v = await validateImageWithVision(cand.url, item.entity, lovableKey);
+      if (v && v.match && v.confidence >= 65) {
+        cand.validated = true;
+        cand.category = v.category;
+        cand.score += v.confidence;
+        cover = cand;
+        break;
+      }
+    }
+  }
+  if (!cover) cover = scored[0] || null;
+
+  // 4) AI fallback for cover if everything failed
+  if (!cover) {
+    const aiUrl = await generateAndUploadImage(
+      `Promotional artwork for the video game "${item.entity?.gameTitle || item.title}". Dramatic lighting, epic composition, cinematic.`,
+      lovableKey,
+      supabase,
+    );
+    if (aiUrl) {
+      cover = { url: aiUrl, category: 'promo', score: 60, source: 'ai', validated: true };
+    }
+  }
+
+  // 5) Download cover + top N internal images to our bucket
+  const finalMeta: ImageMeta[] = [];
+  if (cover) {
+    const hosted = cover.source === 'ai' ? cover.url : await downloadAndStoreImage(cover.url, supabase, item.title, cover.category);
+    if (hosted) finalMeta.push({ ...cover, url: hosted });
+    else finalMeta.push(cover); // fallback to original URL
+  }
+
+  const wantInternal = Math.max(0, minImages - 1);
+  const internalPool = scored.filter((m) => m.url !== cover?.url).slice(0, wantInternal + 4);
+  for (const m of internalPool) {
+    if (finalMeta.length >= minImages) break;
+    const hosted = await downloadAndStoreImage(m.url, supabase, item.title, m.category);
+    if (hosted) finalMeta.push({ ...m, url: hosted });
+  }
+
+  // 6) Distribute categories across review sections (categorize any "other" by position)
+  item.imageMeta = finalMeta;
+  item.imageUrls = finalMeta.map((m) => m.url);
 }
 
 // =====================================================================
@@ -753,7 +1087,29 @@ function buildReviewContent(parsed: Record<string, unknown>, item: NewsItem) {
   const pros = asList(parsed.pros).slice(0, 5);
   const cons = asList(parsed.cons).slice(0, 5);
   // Use a richer image pool for review sections (capa + 5 internas).
-  const galleryImages = item.imageUrls.slice(1, 7);
+  // Prefer category-aware selection when imageMeta is available.
+  const pool: ImageMeta[] = (item.imageMeta || []).slice(1); // skip cover
+  const fallbackGallery = item.imageUrls.slice(1, 7);
+  const used = new Set<string>();
+  const pick = (prefs: ImageCategory[]): string | undefined => {
+    for (const p of prefs) {
+      const hit = pool.find((m) => !used.has(m.url) && m.category === p);
+      if (hit) { used.add(hit.url); return hit.url; }
+    }
+    const any = pool.find((m) => !used.has(m.url));
+    if (any) { used.add(any.url); return any.url; }
+    const fb = fallbackGallery.find((u) => !used.has(u));
+    if (fb) { used.add(fb); return fb; }
+    return undefined;
+  };
+  const galleryImages = [
+    pick(['character', 'promo']),
+    pick(['environment', 'world']),
+    pick(['cutscene', 'character']),
+    pick(['combat', 'boss']),
+    pick(['cinematic', 'world']),
+    pick(['promo', 'cinematic']),
+  ];
 
   const sectionBlocks = [
     { heading: '🧠 Introdução', text: intro, image: galleryImages[0] },

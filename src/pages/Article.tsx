@@ -165,6 +165,15 @@ const Article = () => {
                 src={article.cover_image}
                 alt={article.title}
                 className="w-full h-full object-cover"
+                loading="eager"
+                decoding="async"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (!img.src.endsWith('/placeholder.svg')) {
+                    img.src = '/placeholder.svg';
+                    img.classList.add('opacity-50');
+                  }
+                }}
               />
             </div>
           )}

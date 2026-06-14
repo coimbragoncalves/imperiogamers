@@ -1,102 +1,140 @@
 ## Objetivo
 
-Reformular o sistema de Auto-Post IA para garantir imagens corretas, relevantes e nunca vazias, melhorar visualmente os reviews, e adicionar a nova categoria **CurioGame**.
+Refatorar **apenas o sistema de imagens** do edge function `ai-auto-post` (sem mexer em conteúdo/CurioGame/Reviews já existentes além da camada visual) para garantir que:
+
+- Nenhum post seja publicado sem capa válida.
+- Toda imagem pertença ao jogo citado (validação visual + token-match).
+- Cada seção do review tenha imagem contextual própria.
+- Imagens venham de fontes oficiais, sejam salvas no nosso bucket e otimizadas.
 
 ---
 
-## 1. Banco de Dados
+## 1. Novo módulo `imagePipeline` dentro de `supabase/functions/ai-auto-post/index.ts`
 
-- Adicionar valor `'curiogame'` ao enum `content_type`.
-- Migração compatível com dados existentes (sem afetar `news`, `review`, `trailer`, `other`).
+Centraliza tudo. Substitui as funções atuais de busca/validação espalhadas.
 
-## 2. Edge Function `ai-auto-post` (reescrita do pipeline de imagens)
+### 1.1 Detecção de entidade (já existe, será endurecida)
+`extractTopicEntity(item)` → Gemini `google/gemini-3-flash-preview` retorna:
+```
+{ gameTitle, franchise, alternateTitles[], platform, studio, characters[], genre, tags[], theme }
+```
+Resultado cacheado por artigo e reutilizado em todas as queries de imagem.
 
-### 2.1 Detecção de tópico
-- Nova função `extractTopicEntity(item)`: usa Gemini (`google/gemini-3-flash-preview`) para extrair de cada artigo:
-  - `gameTitle`, `franchise`, `platform`, `studio`, `characters[]`, `genre`, `keywords[]`.
-- Resultado guardado por item e reutilizado em prompts de imagens.
+### 1.2 Fontes multi-provider (ordem de prioridade)
 
-### 2.2 Busca multi-fonte de imagens (não depende mais só da fonte)
-Ordem de busca (para no primeiro batch válido):
-1. Imagens já extraídas da fonte (pipeline atual).
-2. **Firecrawl search** com queries específicas — uma por entidade:
-   - `"<gameTitle>" official key art`
-   - `"<gameTitle>" screenshot gameplay`
-   - `"<gameTitle>" press kit`
-   - Filtrando por domínios oficiais e confiáveis: `store.steampowered.com`, `blog.playstation.com`, `news.xbox.com`, `nintendo.com`, `epicgames.com`, `ign.com/images`, `gamespot.com/images`, `media.rawg.io`, `wikipedia.org`.
-3. **RAWG API** (sem chave, endpoint público de screenshots) como fallback estável para screenshots oficiais.
-4. **Lovable AI image generation** (`google/gemini-3.1-flash-image-preview`) como último recurso — gera uma key-art temática (sem rostos de personagens reais) e faz upload para o bucket `uploads`.
+| # | Fonte | Como chamar | Precisa secret? |
+|---|---|---|---|
+| 1 | **RAWG** | `https://api.rawg.io/api/games?search=...` + `/games/{id}/screenshots` | `RAWG_API_KEY` (free) |
+| 2 | **IGDB** | OAuth via Twitch → `api.igdb.com/v4/games`, `/screenshots`, `/artworks`, `/covers` | `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` |
+| 3 | **Steam CDN** | Steam Store search `https://store.steampowered.com/api/storesearch/?term=...&l=en&cc=us` → appdetails `/api/appdetails?appids=` (campos `screenshots`, `header_image`, `background`) | Nenhum |
+| 4 | **MobyGames** | `https://api.mobygames.com/v1/games?title=...` + `/games/{id}/screenshots` | `MOBYGAMES_API_KEY` (opcional) |
+| 5 | **GiantBomb** | `https://www.giantbomb.com/api/search/?query=...&resources=game` | `GIANTBOMB_API_KEY` (opcional) |
+| 6 | **Firecrawl search** (fallback) | já implementado | `FIRECRAWL_API_KEY` (já temos) |
+| 7 | **Bing Images** scrape via Firecrawl | `bing.com/images/search?q=...` | já temos |
+| 8 | **Google Images** scrape via Firecrawl | `google.com/search?tbm=isch&q=...` | já temos |
 
-### 2.3 Validação de relevância
-Antes de aceitar uma imagem candidata:
-- Dimensões mínimas via HEAD + parser (descarta < 600×400).
-- URL não pode conter padrões de logo / banner / ad (regras atuais mantidas).
-- Token-match contra entidades extraídas (nome do jogo, franquia, personagens) — não apenas o título.
-- Validação semântica leve via Gemini Vision (`google/gemini-2.5-flash`) com prompt: *"Esta imagem corresponde ao jogo X? Responda apenas SIM/NÃO."* — feita só para a capa e quando há dúvida (custo controlado).
+Pipeline para por nas primeiras N (≥8) imagens válidas após validação.
 
-### 2.4 Anti-duplicação visual
-- Conjunto local por artigo + conjunto global por execução para nunca repetir a mesma URL.
-- A capa nunca é reutilizada dentro do corpo.
+> **Pedido ao usuário**: para usar RAWG/IGDB/MobyGames/GiantBomb com qualidade máxima preciso que ele autorize adicionar os secrets correspondentes. Steam e Firecrawl funcionam sem secret novo. Se o usuário não quiser configurar, o sistema usa só Steam + Firecrawl como fontes oficiais — ainda fica muito melhor do que hoje.
 
-### 2.5 Reviews com imagens por seção
-Reescrita de `buildReviewContent` para que cada seção (Introdução, Atmosfera, História, Combate, Gráficos, Conclusão) receba uma imagem **contextual**:
-- Para cada seção, query dedicada (`"<game>" combat`, `"<game>" environment`, `"<game>" cutscene`, `"<game>" screenshot 4k`).
-- Se a busca falhar, usa próxima imagem da galeria geral ranqueada por relevância.
-- Garantido: 6 imagens distintas no review (capa + 5 internas).
+### 1.3 Filtro técnico (descartar lixo automático)
+Para cada candidata:
+- HEAD request com timeout 5s → status 200 obrigatório.
+- Content-Type `image/*`.
+- Largura ≥ 1280 e altura ≥ 720 (HD). Detecta via `image-size` lendo os primeiros bytes (Deno: `import { imageSize } from "https://deno.land/x/...";` ou usar parser próprio para PNG/JPEG/WebP — implementação inline já que não há dep).
+- Bloquear domínios e padrões: `adservice`, `doubleclick`, `pagead`, `tracking`, `pixel`, `banner-`, `placeholder`, `logo-only`, `sprite`, `favicon`, `thumb_`, `_thumb`, `100x100`, `150x`.
+- Hash perceptual simples (primeiros 1KB) → deduplica entre fontes.
 
-### 2.6 Verificação final pré-publicação
-Função `validateArticleImages(article)`:
-- Confere capa existente e acessível (HEAD 200).
-- Confere que toda `<img>` no HTML carrega.
-- Se algo falhar, tenta repor pela pool restante; se zerar, dispara geração via AI.
-- Se mesmo assim não tiver capa, **bloqueia a publicação** e loga no `ai_post_logs` com status `no_image`.
+### 1.4 Token-match contextual
+Score 0–100 baseado em:
+- nome do jogo aparece em URL/alt/filename: +40
+- franquia aparece: +20
+- nome de personagem: +15
+- domínio oficial (steampowered, igdb, rawg, mobygames, giantbomb, blog.playstation, news.xbox, nintendo): +25
+- imagem vinda da fonte 1–5: +30
+Mínimo aceito: 50.
 
-## 3. Nova categoria CurioGame
+### 1.5 Validação visual com Gemini (capa + 1 amostra por seção)
+Único provider e único modelo: `google/gemini-2.5-flash` via `/v1/chat/completions` com `image_url`.
 
-### 3.1 Pipeline
-- Novo branch no edge function quando `contentTypes` inclui `curiogame`:
-  - Não depende de scraping de notícias do dia. Em vez disso, gera **pauta** via Gemini com prompt dedicado: curiosidades, easter eggs, polêmicas, bugs lendários, jogos cancelados, etc.
-  - Lista de tópicos rotativos para evitar repetir tema. Verifica `ai_post_logs` e títulos recentes com `areLikelyDuplicateTitles`.
-  - Busca imagens com o mesmo pipeline (2.2/2.3) usando o jogo/franquia da curiosidade.
+Prompt:
+> "Esta imagem é claramente do jogo **{gameTitle}** (franquia {franchise})? Procure logo do jogo, HUD, personagens conhecidos, estilo visual. Responda em JSON: `{ \"match\": true|false, \"confidence\": 0-100, \"category\": \"combat|world|character|cutscene|ui|environment|boss|cinematic|promo|other\", \"reason\": \"...\" }`."
 
-### 3.2 Conteúdo
-- Novo `buildCurioGameContent`:
-  - Tom divertido / misterioso / clickbait controlado.
-  - Estrutura: Hook → Contexto histórico → A curiosidade em si → Reações da comunidade → Conclusão divertida.
-  - 4–6 imagens contextuais.
-  - Tag visual `🎮 CurioGame` no topo.
+Regras de custo:
+- Capa: sempre valida.
+- Demais imagens: valida só as top 8 por token-match. Outras herdam confiança do token-score.
+- Aceita se `match=true && confidence>=70`.
 
-### 3.3 Frontend
-- Nova rota `/curiogame` (listagem) e item no menu do Header.
-- Card visual diferenciado (badge "CURIOSIDADE").
-- Página individual usa o mesmo `Article.tsx` (apenas filtra por `content_type='curiogame'` na listagem).
-- Filtro no Admin → AI auto-post para habilitar CurioGame.
+Resultado guardado por imagem: `{ url, category, score, validated }`.
 
-## 4. Admin AI
+### 1.6 Classificação contextual e distribuição
+Pool classificado por `category`. Distribuição por seção do review:
 
-- No `AdminAI.tsx`, adicionar checkbox **CurioGame** ao seletor de `contentTypes`.
-- Atualizar `postsPerType` para também cobrir curiogame.
+```
+intro      → character | promo
+atmosfera  → environment | world
+narrativa  → cutscene | character
+gameplay   → combat | boss
+graficos   → cinematic | world
+conclusao  → promo | cinematic
+```
+
+Notícias: capa + 2 imagens internas (preferir `promo`, `character`, `cinematic`).
+CurioGame: capa + 3 internas (qualquer categoria, mas únicas).
+Trailers: capa = thumbnail YouTube (mantido), 1 screenshot oficial extra abaixo do vídeo.
+
+### 1.7 Persistência local (anti-hotlink)
+Para cada imagem aprovada:
+1. Download (`fetch`) com timeout 10s.
+2. Upload no bucket `uploads` (já existe, público) via service role:
+   `articles/{articleSlug}/{categoria}-{hash8}.{ext}`.
+3. URL pública do Supabase Storage substitui a original em `cover_image` e em todo o HTML.
+4. Tag `<img loading="lazy" decoding="async" width=".." height=".." alt="{gameTitle} - {category}">`.
+
+### 1.8 Geração com IA como último recurso
+Se mesmo após todas as fontes restarem seções sem imagem **e** já houver pelo menos a capa, gera screenshot temática via `google/gemini-3.1-flash-image-preview` (sem nomear personagens reais).
+Se faltar capa após tudo: **bloqueia publicação**, marca em `ai_post_logs` com `status='no_image'`.
+
+### 1.9 Anti-falhas
+- Cada chamada externa: `AbortController` 8s, 2 retries com backoff (500ms, 1500ms).
+- Pool global por execução para nunca repetir a mesma URL em posts diferentes.
+- Logs detalhados em `ai_post_logs.error_message` quando bloqueia.
 
 ---
 
-## Detalhes técnicos
+## 2. Frontend — exibição
 
-- Arquivos editados:
-  - `supabase/functions/ai-auto-post/index.ts` (refatoração grande, mantém compat. com cron).
-  - Nova migration: `ALTER TYPE content_type ADD VALUE 'curiogame';`.
-  - `src/App.tsx`: rota `/curiogame`.
-  - `src/pages/CurioGame.tsx`: nova página (copia padrão de `News.tsx`).
-  - `src/components/layout/Header.tsx`: novo link de menu.
-  - `src/components/admin/AdminAI.tsx`: opção CurioGame.
-  - `public/llms.txt` / sitemap: incluir `/curiogame`.
+Mudanças mínimas em `src/pages/Article.tsx` e `ArticleCard.tsx`:
+- Adicionar `loading="lazy"` e `decoding="async"` em imagens internas (capa fica `eager`).
+- `onError` → swap para `placeholder.svg` com classe `opacity-50` para nunca ficar buraco visual.
 
-- Geração de imagem usa endpoint `https://ai.gateway.lovable.dev/v1/chat/completions` com `modalities: ["image","text"]` e upload do `data:image/png;base64,...` para o bucket `uploads` via service role.
+Nenhuma mudança em design system, layout ou outras rotas.
 
-- Custos controlados:
-  - Vision validation só na capa (1 chamada por artigo).
-  - Geração de imagem só quando todas as buscas falharem.
+---
 
-## Riscos / notas
+## 3. Secrets necessários (peço confirmação)
 
-- A validação por Gemini Vision adiciona ~1 chamada extra por artigo. Aceitável para a meta de zero posts sem imagem correta.
-- A migration do enum é irreversível (Postgres não remove valores de enum facilmente). Confirma antes de aplicar.
+Sem custos extras para o usuário se ele só quiser RAWG (gratuita) e Twitch/IGDB (gratuita):
+
+- `RAWG_API_KEY` — https://rawg.io/apidocs (grátis)
+- `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` — https://dev.twitch.tv/console (grátis, libera IGDB)
+- `MOBYGAMES_API_KEY` — opcional, https://www.mobygames.com/info/api
+- `GIANTBOMB_API_KEY` — opcional, https://www.giantbomb.com/api
+
+**Steam e Firecrawl já funcionam sem nada novo.**
+
+---
+
+## Riscos / Notas
+
+- Validação visual com Gemini adiciona ~1 chamada/imagem nas top-8 (≈8 chamadas extras por post). Aceitável para zerar imagens erradas.
+- Upload no bucket aumenta latência em ~2–5s por post, mas garante CDN próprio e elimina hotlink.
+- Sem os secrets de RAWG/IGDB o sistema ainda funciona, só perde precisão nas fontes oficiais.
+
+---
+
+## Confirmação que preciso antes de implementar
+
+1. Posso pedir os secrets **RAWG_API_KEY** e **TWITCH_CLIENT_ID/SECRET** (gratuitos)? Sem eles fico restrito a Steam + Firecrawl.
+2. Quer adicionar **MobyGames** e **GiantBomb** também (opcional)?
+3. Confirma a regra dura: **se não houver capa válida, NÃO publica** e loga erro?
