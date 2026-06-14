@@ -52,6 +52,15 @@ const ArticleCard = ({
               src={coverImage}
               alt={title}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                const img = e.currentTarget;
+                if (!img.src.endsWith('/placeholder.svg')) {
+                  img.src = '/placeholder.svg';
+                  img.classList.add('opacity-50');
+                }
+              }}
             />
           ) : (
             <div className="w-full h-full bg-secondary flex items-center justify-center">
