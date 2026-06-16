@@ -2024,6 +2024,29 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
+    }; // end runPipeline
+
+    try {
+      // @ts-ignore EdgeRuntime is a Deno Deploy global
+      if (typeof EdgeRuntime !== 'undefined' && typeof (EdgeRuntime as any).waitUntil === 'function') {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(runPipeline().catch((e) => console.error('Background pipeline error:', e)));
+      } else {
+        runPipeline().catch((e) => console.error('Background pipeline error:', e));
+      }
+    } catch (bgErr) {
+      console.error('Failed to schedule background pipeline:', bgErr);
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        queued: true,
+        message: `Geração iniciada em segundo plano (${contentTypes.join(', ')} · ${postsPerType} por tipo). Acompanhe no histórico.`,
+      }),
+      { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+
   } catch (error) {
     console.error('AI auto-post error:', error);
     return new Response(
