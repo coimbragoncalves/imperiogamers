@@ -1375,7 +1375,11 @@ serve(async (req) => {
     console.log('Execution mode:', forceNew ? 'MANUAL (force new)' : 'AUTOMATIC (check duplicates)');
     console.log('Posts per type:', postsPerType);
     console.log('Content types:', contentTypes);
-    
+
+    // Heavy pipeline runs in the background so the HTTP request returns
+    // immediately (avoids client/Cloudflare timeouts on the admin UI).
+    const runPipeline = async () => {
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
