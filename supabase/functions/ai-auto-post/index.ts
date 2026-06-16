@@ -1375,7 +1375,11 @@ serve(async (req) => {
     console.log('Execution mode:', forceNew ? 'MANUAL (force new)' : 'AUTOMATIC (check duplicates)');
     console.log('Posts per type:', postsPerType);
     console.log('Content types:', contentTypes);
-    
+
+    // Heavy pipeline runs in the background so the HTTP request returns
+    // immediately (avoids client/Cloudflare timeouts on the admin UI).
+    const runPipeline = async () => {
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
@@ -2018,6 +2022,29 @@ serve(async (req) => {
           itemsFound: uniqueCandidates.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+
+    }; // end runPipeline
+
+    try {
+      // @ts-ignore EdgeRuntime is a Deno Deploy global
+      if (typeof EdgeRuntime !== 'undefined' && typeof (EdgeRuntime as any).waitUntil === 'function') {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(runPipeline().catch((e) => console.error('Background pipeline error:', e)));
+      } else {
+        runPipeline().catch((e) => console.error('Background pipeline error:', e));
+      }
+    } catch (bgErr) {
+      console.error('Failed to schedule background pipeline:', bgErr);
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        queued: true,
+        message: `Geração iniciada em segundo plano (${contentTypes.join(', ')} · ${postsPerType} por tipo). Acompanhe no histórico.`,
+      }),
+      { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
