@@ -3,7 +3,6 @@ import AdDisplay from '@/components/ads/AdDisplay';
 
 interface ArticleContentProps {
   html: string;
-  adFrequency?: number; // insert ad every N content blocks
 }
 
 const CONTENT_TAGS = new Set([
@@ -11,42 +10,43 @@ const CONTENT_TAGS = new Set([
   'UL', 'OL', 'BLOCKQUOTE', 'PRE',
 ]);
 
-const ArticleContent = ({ html, adFrequency = 5 }: ArticleContentProps) => {
-  const blocks = useMemo(() => {
+const ArticleContent = ({ html }: ArticleContentProps) => {
+  const { topHtml, bottomHtml } = useMemo(() => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
     const root = doc.body.firstElementChild as HTMLDivElement;
-    if (!root) return [];
+    if (!root) return { topHtml: html, bottomHtml: '' };
 
     const nodes = Array.from(root.childNodes);
-    const chunks: { type: 'html'; html: string }[] = [];
-    let currentHtml = '';
-    let contentCount = 0;
+    const contentIndices: number[] = [];
 
-    for (const node of nodes) {
-      currentHtml += (node as Element).outerHTML ?? (node as Text).textContent ?? '';
-
+    nodes.forEach((node, idx) => {
       if (node instanceof Element && CONTENT_TAGS.has(node.tagName)) {
-        contentCount++;
+        contentIndices.push(idx);
       }
+    });
 
-      if (contentCount >= adFrequency) {
-        if (currentHtml.trim()) {
-          chunks.push({ type: 'html', html: currentHtml });
-        }
-        contentCount = 0;
-        currentHtml = '';
-      }
+    // If not enough content blocks, just show full content without inline ad
+    if (contentIndices.length < 6) {
+      return { topHtml: html, bottomHtml: '' };
     }
 
-    if (currentHtml.trim()) {
-      chunks.push({ type: 'html', html: currentHtml });
-    }
+    const midIndex = Math.floor(contentIndices.length / 2);
+    const splitAt = contentIndices[midIndex];
 
-    return chunks;
-  }, [html, adFrequency]);
+    const topNodes = nodes.slice(0, splitAt);
+    const bottomNodes = nodes.slice(splitAt);
 
-  if (blocks.length === 0) {
+    const topContainer = document.createElement('div');
+    topNodes.forEach((n) => topContainer.appendChild(n.cloneNode(true)));
+
+    const bottomContainer = document.createElement('div');
+    bottomNodes.forEach((n) => bottomContainer.appendChild(n.cloneNode(true)));
+
+    return { topHtml: topContainer.innerHTML, bottomHtml: bottomContainer.innerHTML };
+  }, [html]);
+
+  if (!bottomHtml) {
     return (
       <div
         className="prose prose-invert prose-lg max-w-none"
@@ -57,16 +57,11 @@ const ArticleContent = ({ html, adFrequency = 5 }: ArticleContentProps) => {
 
   return (
     <div className="prose prose-invert prose-lg max-w-none">
-      {blocks.map((block, idx) => (
-        <div key={idx}>
-          <div dangerouslySetInnerHTML={{ __html: block.html }} />
-          {idx < blocks.length - 1 && (
-            <div className="my-8 py-4 px-2 border-y border-dashed border-muted/30 bg-muted/5 rounded-sm">
-              <AdDisplay position="article-inline" />
-            </div>
-          )}
-        </div>
-      ))}
+      <div dangerouslySetInnerHTML={{ __html: topHtml }} />
+      <div className="my-8 py-4 px-2 border-y border-dashed border-muted/30 bg-muted/5 rounded-sm">
+        <AdDisplay position="article-middle" />
+      </div>
+      <div dangerouslySetInnerHTML={{ __html: bottomHtml }} />
     </div>
   );
 };
