@@ -58,9 +58,7 @@ const ArticleContent = ({ html }: ArticleContentProps) => {
   return (
     <div className="prose prose-invert prose-lg max-w-none">
       <div dangerouslySetInnerHTML={{ __html: topHtml }} />
-      <div className="my-8 py-4 px-2 border-y border-dashed border-muted/30 bg-muted/5 rounded-sm">
-        <AdDisplay position="article-middle" />
-      </div>
+      <AdDisplay position="article-middle" />
       <div dangerouslySetInnerHTML={{ __html: bottomHtml }} />
     </div>
   );
