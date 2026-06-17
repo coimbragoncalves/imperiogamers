@@ -14,6 +14,7 @@ import CommentSection from '@/components/articles/CommentSection';
 import ReactionButtons from '@/components/articles/ReactionButtons';
 import ShareButtons from '@/components/articles/ShareButtons';
 import AdDisplay from '@/components/ads/AdDisplay';
+import ArticleContent from '@/components/articles/ArticleContent';
 interface ArticleData {
   id: string;
   title: string;
