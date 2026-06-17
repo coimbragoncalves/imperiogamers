@@ -180,48 +180,18 @@ const Article = () => {
 
           {/* Content */}
           {article.content && (
-            <div 
-              className="prose prose-invert prose-lg max-w-none mb-8"
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(article.content, {
-                ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'a', 'img', 'blockquote', 'pre', 'code', 'span', 'div', 'iframe'],
-                ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'target', 'rel', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'],
-                ALLOW_DATA_ATTR: false,
-                FORBID_TAGS: ['script', 'style', 'ins', 'object', 'embed', 'form', 'input', 'button'],
-                FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'style'],
-                ADD_URI_SAFE_ATTR: ['src', 'href']
-              }) }}
-              ref={(el) => {
-                if (!el) return;
-                // Allow only trusted iframe hosts (videos/social embeds). Drop everything else (ad networks).
-                const allowedIframeHosts = [
-                  'youtube.com', 'youtube-nocookie.com', 'youtu.be',
-                  'vimeo.com', 'player.vimeo.com',
-                  'twitch.tv', 'player.twitch.tv',
-                  'twitter.com', 'x.com', 'platform.twitter.com',
-                  'instagram.com', 'tiktok.com',
-                  'facebook.com', 'soundcloud.com', 'spotify.com'
-                ];
-                el.querySelectorAll('iframe').forEach((iframe) => {
-                  try {
-                    const src = iframe.getAttribute('src') || '';
-                    const host = new URL(src, window.location.origin).hostname.replace(/^www\./, '');
-                    const ok = allowedIframeHosts.some((h) => host === h || host.endsWith('.' + h));
-                    if (!ok) iframe.remove();
-                  } catch {
-                    iframe.remove();
-                  }
-                });
-                // Remove obvious third-party ad containers/scripts left over from scraped content.
-                const adSelectors = [
-                  '[id*="google_ads"]', '[id*="ad-"]', '[id*="-ad"]', '[id^="ad_"]', '[id$="_ad"]',
-                  '[class*="advert"]', '[class*="ad-slot"]', '[class*="ad-container"]',
-                  '[class*="adsbygoogle"]', '[class*="adsense"]', '[class*="banner-ad"]',
-                  '[class*="sponsored"]', '[class*="promoted"]', '[data-ad]', '[data-ad-slot]',
-                  'ins.adsbygoogle', 'aside.ad', 'div.ad'
-                ];
-                el.querySelectorAll(adSelectors.join(',')).forEach((n) => n.remove());
-              }}
-            />
+            <div className="mb-8">
+              <ArticleContent
+                html={DOMPurify.sanitize(article.content, {
+                  ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'a', 'img', 'blockquote', 'pre', 'code', 'span', 'div', 'iframe'],
+                  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'target', 'rel', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'],
+                  ALLOW_DATA_ATTR: false,
+                  FORBID_TAGS: ['script', 'style', 'ins', 'object', 'embed', 'form', 'input', 'button'],
+                  FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'style'],
+                  ADD_URI_SAFE_ATTR: ['src', 'href']
+                })}
+              />
+            </div>
           )}
 
           {/* Reactions */}
