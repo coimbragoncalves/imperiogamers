@@ -88,6 +88,7 @@ export type Database = {
       ai_settings: {
         Row: {
           created_at: string
+          facebook_crosspost_enabled: boolean
           id: string
           is_enabled: boolean
           last_run_at: string | null
@@ -98,6 +99,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          facebook_crosspost_enabled?: boolean
           id?: string
           is_enabled?: boolean
           last_run_at?: string | null
@@ -108,6 +110,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          facebook_crosspost_enabled?: boolean
           id?: string
           is_enabled?: boolean
           last_run_at?: string | null

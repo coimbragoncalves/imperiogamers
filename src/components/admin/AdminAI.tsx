@@ -25,7 +25,8 @@ import {
   Hash,
   Newspaper,
   Star,
-  Film
+  Film,
+  Facebook
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -37,6 +38,7 @@ interface AISettings {
   youtube_channels: string[];
   schedule_times: string[];
   last_run_at: string | null;
+  facebook_crosspost_enabled: boolean;
   updated_at: string;
 }
 
@@ -349,6 +351,31 @@ const AdminAI = () => {
       </div>
 
       {/* Status Card */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <Facebook className="h-5 w-5 text-primary" />
+            <div>
+              <h2 className="text-lg font-semibold">Cross-post no Facebook</h2>
+              <p className="text-sm text-muted-foreground">
+                Publica automaticamente cada novo artigo na página do Império Gamers
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {settings?.facebook_crosspost_enabled ? 'Ativado' : 'Desativado'}
+            </span>
+            <Switch
+              checked={settings?.facebook_crosspost_enabled || false}
+              onCheckedChange={(checked) =>
+                updateSettings.mutate({ facebook_crosspost_enabled: checked })
+              }
+            />
+          </div>
+        </div>
+      </Card>
+
       <Card className={`p-4 ${settings?.is_enabled ? 'border-primary/50 bg-primary/5' : 'border-muted'}`}>
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">

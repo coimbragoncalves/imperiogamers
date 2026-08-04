@@ -1347,6 +1347,48 @@ async function generateCurioGameTopic(
   }
 }
 
+const SITE_URL = 'https://imperiogamers.lovable.app';
+
+async function crossPostToFacebook(post: {
+  title: string;
+  description: string;
+  slug: string;
+  contentType: string;
+}): Promise<void> {
+  const token = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
+  const pageId = Deno.env.get('FACEBOOK_PAGE_ID');
+  if (!token || !pageId) {
+    console.log('Facebook cross-post skipped: missing credentials');
+    return;
+  }
+
+  const path = post.contentType === 'trailer' ? 'trailer' : 'artigo';
+  const link = `${SITE_URL}/${path}/${post.slug}`;
+  const tags: Record<string, string> = {
+    news: '#noticias #games',
+    review: '#review #analise #games',
+    trailer: '#trailer #games',
+    curiogame: '#curiogame #curiosidades #games',
+  };
+  const message = `${post.title}\n\n${post.description}\n\n${link}\n\n${tags[post.contentType] || '#games'} #ImperioGamers`;
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, link, access_token: token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('Facebook cross-post failed:', JSON.stringify(data));
+    } else {
+      console.log('Facebook cross-post ok:', data.id);
+    }
+  } catch (err) {
+    console.error('Facebook cross-post error:', err);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -1954,6 +1996,16 @@ serve(async (req) => {
           content_type: item.contentType,
           status: 'success'
         });
+
+        // Cross-post to Facebook Page (if enabled)
+        if ((settings as Record<string, unknown>).facebook_crosspost_enabled) {
+          await crossPostToFacebook({
+            title: builtContent.title,
+            description: builtContent.description,
+            slug: article.slug,
+            contentType: item.contentType,
+          });
+        }
 
         recentSourceKeys.add(normalizedSourceUrl);
         recentPublished.unshift({
