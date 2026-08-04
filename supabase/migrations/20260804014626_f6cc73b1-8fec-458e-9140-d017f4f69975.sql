@@ -1,0 +1,1 @@
+ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS facebook_crosspost_enabled boolean NOT NULL DEFAULT false;
