@@ -1955,6 +1955,16 @@ serve(async (req) => {
           status: 'success'
         });
 
+        // Cross-post to Facebook Page (if enabled)
+        if ((settings as Record<string, unknown>).facebook_crosspost_enabled) {
+          await crossPostToFacebook({
+            title: builtContent.title,
+            description: builtContent.description,
+            slug: article.slug,
+            contentType: item.contentType,
+          });
+        }
+
         recentSourceKeys.add(normalizedSourceUrl);
         recentPublished.unshift({
           title: builtContent.title,
