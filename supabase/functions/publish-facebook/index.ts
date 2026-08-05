@@ -16,6 +16,21 @@ function json(body: unknown, status = 200) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
+  // Auth: internal calls use the service role key; admins use their session JWT.
+  const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+  if (!bearer) return json({ error: 'Não autenticado' }, 401);
+  if (bearer !== SERVICE_ROLE) {
+    const { data: userData, error: userError } = await admin.auth.getUser(bearer);
+    if (userError || !userData.user) return json({ error: 'Sessão inválida' }, 401);
+    const { data: role } = await admin
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userData.user.id)
+      .eq('role', 'admin')
+      .maybeSingle();
+    if (!role) return json({ error: 'Acesso restrito a administradores' }, 403);
+  }
+
   let body: Record<string, unknown> = {};
   try {
     body = await req.json();
