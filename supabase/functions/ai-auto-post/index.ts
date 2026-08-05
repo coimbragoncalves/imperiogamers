@@ -1355,13 +1355,6 @@ async function crossPostToFacebook(post: {
   slug: string;
   contentType: string;
 }): Promise<void> {
-  const token = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
-  const pageId = Deno.env.get('FACEBOOK_PAGE_ID');
-  if (!token || !pageId) {
-    console.log('Facebook cross-post skipped: missing credentials');
-    return;
-  }
-
   const path = post.contentType === 'trailer' ? 'trailer' : 'artigo';
   const link = `${SITE_URL}/${path}/${post.slug}`;
   const tags: Record<string, string> = {
@@ -1373,16 +1366,19 @@ async function crossPostToFacebook(post: {
   const message = `${post.title}\n\n${post.description}\n\n${link}\n\n${tags[post.contentType] || '#games'} #ImperioGamers`;
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/publish-facebook`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, link, access_token: token }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+      },
+      body: JSON.stringify({ message, link, title: post.title }),
     });
     const data = await res.json();
     if (!res.ok) {
       console.error('Facebook cross-post failed:', JSON.stringify(data));
     } else {
-      console.log('Facebook cross-post ok:', data.id);
+      console.log('Facebook cross-post ok:', data.post_id);
     }
   } catch (err) {
     console.error('Facebook cross-post error:', err);
