@@ -315,6 +315,48 @@ export type Database = {
         }
         Relationships: []
       }
+      facebook_connections: {
+        Row: {
+          access_token: string
+          created_at: string
+          id: string
+          last_error: string | null
+          last_published_at: string | null
+          last_published_title: string | null
+          page_id: string
+          page_name: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          last_published_at?: string | null
+          last_published_title?: string | null
+          page_id: string
+          page_name: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token?: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          last_published_at?: string | null
+          last_published_title?: string | null
+          page_id?: string
+          page_name?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       featured_settings: {
         Row: {
           auto_cleanup_enabled: boolean
