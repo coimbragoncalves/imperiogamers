@@ -12,7 +12,8 @@ import {
   X,
   FolderDown,
   Bot,
-  Star
+  Star,
+  Facebook
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ import AdminAds from '@/components/admin/AdminAds';
 import AdminDownloads from '@/components/admin/AdminDownloads';
 import AdminAI from '@/components/admin/AdminAI';
 import AdminFeatured from '@/components/admin/AdminFeatured';
+import AdminFacebook from '@/components/admin/AdminFacebook';
 import ArticleEditor from '@/components/admin/ArticleEditor';
 import TrailerEditor from '@/components/admin/TrailerEditor';
 import DownloadEditor from '@/components/admin/DownloadEditor';
@@ -67,6 +69,7 @@ const Admin = () => {
     { icon: Megaphone, label: 'Anúncios', path: '/admin/anuncios' },
     { icon: Star, label: 'Destaques', path: '/admin/destaques' },
     { icon: Bot, label: 'IA Auto-Post', path: '/admin/ia' },
+    { icon: Facebook, label: 'Facebook', path: '/admin/facebook' },
   ];
 
   return (
@@ -172,6 +175,7 @@ const Admin = () => {
             <Route path="anuncios" element={<AdminAds />} />
             <Route path="destaques" element={<AdminFeatured />} />
             <Route path="ia" element={<AdminAI />} />
+            <Route path="facebook" element={<AdminFacebook />} />
           </Routes>
         </main>
       </div>
