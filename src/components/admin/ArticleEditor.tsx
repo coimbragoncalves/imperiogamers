@@ -123,13 +123,28 @@ const ArticleEditor = () => {
           .update(articleData)
           .eq('id', id);
         if (error) throw error;
+        return { published: false, slug: finalSlug };
       } else {
         const { error } = await supabase.from('articles').insert(articleData);
         if (error) throw error;
+        return { published: isPublished, slug: finalSlug };
       }
     },
-    onSuccess: () => {
+    onSuccess: async (result) => {
       toast({ title: isEditing ? 'Artigo atualizado!' : 'Artigo criado!' });
+      if (result?.published) {
+        const fb = await publishArticleToFacebook({
+          title,
+          description: subtitle || metaDescription,
+          slug: result.slug,
+          contentType,
+        });
+        if (fb.ok) {
+          toast({ title: 'Publicado no Facebook!' });
+        } else if (fb.error && !/nenhuma página/i.test(fb.error)) {
+          toast({ title: 'Falha ao publicar no Facebook', description: fb.error, variant: 'destructive' });
+        }
+      }
       setLastSaved(new Date());
       setIsDirty(false);
       navigate('/admin/artigos');
