@@ -47,13 +47,22 @@ Deno.serve(async (req) => {
   }
 
   // Optional: callers may pass a user JWT; otherwise use the single active connection.
-  const { data: connection } = await admin
+  let { data: connection } = await admin
     .from('facebook_connections')
     .select('id, page_id, page_name, access_token')
     .eq('status', 'connected')
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Fallback: legacy Page token kept as a secret (used until OAuth connect is done)
+  if (!connection) {
+    const legacyId = Deno.env.get('FACEBOOK_PAGE_ID');
+    const legacyToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
+    if (legacyId && legacyToken) {
+      connection = { id: '', page_id: legacyId, page_name: '', access_token: legacyToken };
+    }
+  }
 
   if (!connection) {
     return json({ error: 'Nenhuma Página do Facebook conectada.', kind: 'not_connected' }, 400);
@@ -65,15 +74,17 @@ Deno.serve(async (req) => {
       body: { message, ...(link ? { link } : {}), access_token: connection.access_token },
     });
 
-    await admin
-      .from('facebook_connections')
-      .update({
-        last_published_at: new Date().toISOString(),
-        last_published_title: title,
-        last_error: null,
-        status: 'connected',
-      })
-      .eq('id', connection.id);
+    if (connection.id) {
+      await admin
+        .from('facebook_connections')
+        .update({
+          last_published_at: new Date().toISOString(),
+          last_published_title: title,
+          last_error: null,
+          status: 'connected',
+        })
+        .eq('id', connection.id);
+    }
 
     return json({ ok: true, post_id: result.id });
   } catch (err) {
@@ -81,13 +92,15 @@ Deno.serve(async (req) => {
     const detail = err instanceof Error ? err.message : 'Erro inesperado';
     console.error('publish-facebook failed:', kind, detail);
 
-    await admin
-      .from('facebook_connections')
-      .update({
-        last_error: `${FRIENDLY_ERROR[kind as keyof typeof FRIENDLY_ERROR] ?? 'Falha'} (${detail})`,
-        status: kind === 'token_expired' || kind === 'permissions' || kind === 'page_missing' ? 'error' : 'connected',
-      })
-      .eq('id', connection.id);
+    if (connection.id) {
+      await admin
+        .from('facebook_connections')
+        .update({
+          last_error: `${FRIENDLY_ERROR[kind as keyof typeof FRIENDLY_ERROR] ?? 'Falha'} (${detail})`,
+          status: kind === 'token_expired' || kind === 'permissions' || kind === 'page_missing' ? 'error' : 'connected',
+        })
+        .eq('id', connection.id);
+    }
 
     return json({ error: FRIENDLY_ERROR[kind as keyof typeof FRIENDLY_ERROR] ?? detail, kind, detail }, 400);
   }

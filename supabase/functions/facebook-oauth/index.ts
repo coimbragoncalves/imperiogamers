@@ -4,6 +4,8 @@ import { FB_SCOPES, FacebookError, FRIENDLY_ERROR, graphFetch } from '../_shared
 
 const APP_ID = Deno.env.get('FACEBOOK_APP_ID');
 const APP_SECRET = Deno.env.get('FACEBOOK_APP_SECRET');
+const LEGACY_PAGE_ID = Deno.env.get('FACEBOOK_PAGE_ID');
+const LEGACY_PAGE_TOKEN = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -66,7 +68,35 @@ Deno.serve(async (req) => {
         .eq('user_id', userId)
         .eq('status', 'connected')
         .maybeSingle();
-      return json({ connection: data ?? null, configured: Boolean(APP_ID && APP_SECRET) });
+      if (data) return json({ connection: data, configured: Boolean(APP_ID && APP_SECRET) });
+
+      // Fallback: adopt a still-valid legacy Page token stored as a secret
+      if (LEGACY_PAGE_ID && LEGACY_PAGE_TOKEN) {
+        try {
+          const page = await graphFetch<{ id: string; name: string }>(`/${LEGACY_PAGE_ID}`, {
+            query: { access_token: LEGACY_PAGE_TOKEN, fields: 'id,name' },
+          });
+          const { data: inserted } = await admin
+            .from('facebook_connections')
+            .upsert(
+              {
+                user_id: userId,
+                page_id: page.id,
+                page_name: page.name,
+                access_token: LEGACY_PAGE_TOKEN,
+                status: 'connected',
+                last_error: null,
+              },
+              { onConflict: 'user_id,page_id' },
+            )
+            .select('id, page_id, page_name, status, last_error, last_published_at, last_published_title, updated_at')
+            .maybeSingle();
+          return json({ connection: inserted ?? null, configured: Boolean(APP_ID && APP_SECRET), source: 'legacy_token' });
+        } catch (e) {
+          console.log('legacy page token unusable:', e instanceof Error ? e.message : e);
+        }
+      }
+      return json({ connection: null, configured: Boolean(APP_ID && APP_SECRET) });
     }
 
     // ---------- disconnect ----------
