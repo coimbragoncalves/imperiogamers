@@ -39,6 +39,7 @@ interface AISettings {
   schedule_times: string[];
   last_run_at: string | null;
   facebook_crosspost_enabled: boolean;
+  facebook_post_mode: 'card' | 'full';
   updated_at: string;
 }
 
