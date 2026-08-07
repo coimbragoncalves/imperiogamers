@@ -39,6 +39,7 @@ interface AISettings {
   schedule_times: string[];
   last_run_at: string | null;
   facebook_crosspost_enabled: boolean;
+  facebook_post_mode: 'card' | 'full';
   updated_at: string;
 }
 
@@ -374,6 +375,41 @@ const AdminAI = () => {
             />
           </div>
         </div>
+
+        {settings?.facebook_crosspost_enabled && (
+          <div className="mt-5 pt-5 border-t space-y-3">
+            <p className="text-sm font-medium">Formato da publicação no Facebook</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {([
+                {
+                  value: 'card' as const,
+                  label: 'Card + resumo',
+                  hint: 'Publica o título, o resumo e o card com a imagem de capa e link para o site.',
+                },
+                {
+                  value: 'full' as const,
+                  label: 'Conteúdo completo',
+                  hint: 'Publica a notícia/review inteira com todas as fotos do post, sem card nem link.',
+                },
+              ]).map((opt) => {
+                const active = (settings?.facebook_post_mode || 'card') === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => updateSettings.mutate({ facebook_post_mode: opt.value })}
+                    className={`text-left rounded-lg border p-3 transition-colors ${
+                      active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                    }`}
+                  >
+                    <span className="block font-medium text-sm">{opt.label}</span>
+                    <span className="block text-xs text-muted-foreground mt-1">{opt.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Card>
 
       <Card className={`p-4 ${settings?.is_enabled ? 'border-primary/50 bg-primary/5' : 'border-muted'}`}>

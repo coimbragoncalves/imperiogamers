@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 
-const SITE_URL = 'https://imperiogamers.lovable.app';
+const SITE_URL = 'https://imperiogamer1.vercel.app';
 
 const TAGS: Record<string, string> = {
   news: '#noticias #games',
@@ -30,6 +30,27 @@ export async function callFacebookOAuth<T>(payload: Record<string, unknown>): Pr
   return data as T;
 }
 
+function htmlToText(html: string): string {
+  const doc = new DOMParser().parseFromString(
+    html.replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '</$1>\n\n').replace(/<br\s*\/?>/gi, '\n'),
+    'text/html',
+  );
+  return (doc.body.textContent || '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+function extractImages(html: string): string[] {
+  const urls: string[] = [];
+  const re = /<img[^>]+src=["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1].startsWith('http')) urls.push(m[1]);
+  }
+  return urls;
+}
+
 /** Publishes an article on the connected Facebook Page. Never throws. */
 export async function publishArticleToFacebook(post: {
   title: string;
@@ -39,18 +60,53 @@ export async function publishArticleToFacebook(post: {
 }): Promise<{ ok: boolean; error?: string }> {
   const path = post.contentType === 'trailer' ? 'trailer' : 'artigo';
   const link = `${SITE_URL}/${path}/${post.slug}`;
-  const message = [
-    post.title,
-    post.description || '',
-    link,
-    `${TAGS[post.contentType] || '#games'} #ImperioGamers`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  const tags = `${TAGS[post.contentType] || '#games'} #ImperioGamers`;
+
+  // Sharing mode chosen by the admin in the AI panel
+  let mode: 'card' | 'full' = 'card';
+  try {
+    const { data: settings } = await supabase
+      .from('ai_settings')
+      .select('facebook_post_mode')
+      .limit(1)
+      .maybeSingle();
+    if ((settings as { facebook_post_mode?: string } | null)?.facebook_post_mode === 'full') mode = 'full';
+  } catch {
+    /* keep default */
+  }
+
+  let message = [post.title, post.description || '', link, tags].filter(Boolean).join('\n\n');
+  let images: string[] = [];
+
+  if (mode === 'full') {
+    const { data: article } = await supabase
+      .from('articles')
+      .select('id, content, cover_image')
+      .eq('slug', post.slug)
+      .maybeSingle();
+
+    const html = article?.content ? String(article.content) : '';
+    const bodyText = htmlToText(html);
+    message = [post.title, post.description || '', bodyText, tags].filter(Boolean).join('\n\n').slice(0, 60000);
+
+    const extra: string[] = [];
+    if (article?.id) {
+      const { data: gallery } = await supabase
+        .from('article_images')
+        .select('image_url, position')
+        .eq('article_id', article.id)
+        .order('position', { ascending: true });
+      for (const g of gallery || []) if (g.image_url) extra.push(g.image_url);
+    }
+    images = [article?.cover_image, ...extractImages(html), ...extra]
+      .filter((u): u is string => Boolean(u) && String(u).startsWith('http'))
+      .filter((u, i, arr) => arr.indexOf(u) === i)
+      .slice(0, 10);
+  }
 
   try {
     const { data, error } = await supabase.functions.invoke('publish-facebook', {
-      body: { message, link, title: post.title },
+      body: { message, link: mode === 'card' ? link : undefined, title: post.title, mode, images },
     });
     if (error) return { ok: false, error: (data as { error?: string } | null)?.error || error.message };
     if ((data as { error?: string })?.error) return { ok: false, error: (data as { error: string }).error };
