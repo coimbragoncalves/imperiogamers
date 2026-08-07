@@ -1347,13 +1347,31 @@ async function generateCurioGameTopic(
   }
 }
 
-const SITE_URL = 'https://imperiogamers.lovable.app';
+const SITE_URL = 'https://imperiogamer1.vercel.app';
+
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 async function crossPostToFacebook(post: {
   title: string;
   description: string;
   slug: string;
   contentType: string;
+  content?: string;
+  images?: string[];
+  mode?: 'card' | 'full';
 }): Promise<void> {
   const path = post.contentType === 'trailer' ? 'trailer' : 'artigo';
   const link = `${SITE_URL}/${path}/${post.slug}`;
@@ -1363,7 +1381,17 @@ async function crossPostToFacebook(post: {
     trailer: '#trailer #games',
     curiogame: '#curiogame #curiosidades #games',
   };
-  const message = `${post.title}\n\n${post.description}\n\n${link}\n\n${tags[post.contentType] || '#games'} #ImperioGamers`;
+  const tagLine = `${tags[post.contentType] || '#games'} #ImperioGamers`;
+  const mode = post.mode === 'full' ? 'full' : 'card';
+  const images = (post.images || []).filter((u) => typeof u === 'string' && u.startsWith('http')).slice(0, 10);
+
+  const message =
+    mode === 'full'
+      ? [post.title, post.description, htmlToPlainText(post.content || ''), tagLine]
+          .filter(Boolean)
+          .join('\n\n')
+          .slice(0, 60000)
+      : `${post.title}\n\n${post.description}\n\n${link}\n\n${tagLine}`;
 
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/publish-facebook`, {
@@ -1372,7 +1400,13 @@ async function crossPostToFacebook(post: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
       },
-      body: JSON.stringify({ message, link, title: post.title }),
+      body: JSON.stringify({
+        message,
+        link: mode === 'card' ? link : undefined,
+        title: post.title,
+        mode,
+        images: mode === 'full' ? images : [],
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -2000,6 +2034,10 @@ serve(async (req) => {
             description: builtContent.description,
             slug: article.slug,
             contentType: item.contentType,
+            content: builtContent.content,
+            images: [finalCoverImage, ...item.imageUrls].filter(Boolean) as string[],
+            mode:
+              (settings as Record<string, unknown>).facebook_post_mode === 'full' ? 'full' : 'card',
           });
         }
 
