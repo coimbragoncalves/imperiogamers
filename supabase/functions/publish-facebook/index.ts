@@ -41,6 +41,12 @@ Deno.serve(async (req) => {
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const link = typeof body.link === 'string' && body.link.startsWith('http') ? body.link : undefined;
   const title = typeof body.title === 'string' ? body.title.slice(0, 200) : null;
+  const mode = body.mode === 'full' ? 'full' : 'card';
+  const images = Array.isArray(body.images)
+    ? (body.images as unknown[])
+        .filter((u): u is string => typeof u === 'string' && u.startsWith('http'))
+        .slice(0, 10)
+    : [];
 
   if (!message || message.length > 60000) {
     return json({ error: 'message obrigatório (até 60000 caracteres)' }, 400);
@@ -69,10 +75,43 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const result = await graphFetch<{ id: string }>(`/${connection.page_id}/feed`, {
-      method: 'POST',
-      body: { message, ...(link ? { link } : {}), access_token: connection.access_token },
-    });
+    let result: { id: string };
+
+    if (mode === 'full' && images.length > 0) {
+      // Upload every image as an unpublished photo, then publish one post with all of them.
+      const mediaIds: string[] = [];
+      for (const url of images) {
+        try {
+          const photo = await graphFetch<{ id: string }>(`/${connection.page_id}/photos`, {
+            method: 'POST',
+            body: { url, published: false, access_token: connection.access_token },
+          });
+          mediaIds.push(photo.id);
+        } catch (e) {
+          console.error('photo upload skipped:', url, e instanceof Error ? e.message : e);
+        }
+      }
+
+      const attached: Record<string, unknown> = {};
+      mediaIds.forEach((id, i) => {
+        attached[`attached_media[${i}]`] = JSON.stringify({ media_fbid: id });
+      });
+
+      result = await graphFetch<{ id: string }>(`/${connection.page_id}/feed`, {
+        method: 'POST',
+        body: { message, ...attached, access_token: connection.access_token },
+      });
+    } else if (mode === 'full') {
+      result = await graphFetch<{ id: string }>(`/${connection.page_id}/feed`, {
+        method: 'POST',
+        body: { message, access_token: connection.access_token },
+      });
+    } else {
+      result = await graphFetch<{ id: string }>(`/${connection.page_id}/feed`, {
+        method: 'POST',
+        body: { message, ...(link ? { link } : {}), access_token: connection.access_token },
+      });
+    }
 
     if (connection.id) {
       await admin
