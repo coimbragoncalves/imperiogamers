@@ -338,6 +338,103 @@ async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean>
   }
 }
 
+// ============================================================
+// Resilient AI gateway caller: retries transient failures,
+// falls back to alternative models and surfaces credit issues.
+// ============================================================
+const AI_MODEL_CHAIN = [
+  'google/gemini-3-flash-preview',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+];
+
+let AI_CREDITS_EXHAUSTED = false;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function callAiChat(
+  lovableKey: string,
+  payload: Record<string, unknown>,
+  opts: { attemptsPerModel?: number; timeoutMs?: number; label?: string } = {}
+): Promise<string | null> {
+  if (AI_CREDITS_EXHAUSTED) return null;
+
+  const attempts = opts.attemptsPerModel ?? 3;
+  const timeoutMs = opts.timeoutMs ?? 90000;
+  const label = opts.label ?? 'ai';
+  const requestedModel = typeof payload.model === 'string' ? payload.model : AI_MODEL_CHAIN[0];
+  const models = [requestedModel, ...AI_MODEL_CHAIN.filter((m) => m !== requestedModel)];
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${lovableKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ...payload, model }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.choices?.[0]?.message?.content;
+          if (content) return content as string;
+          console.error(`[${label}] empty AI content (${model}), retrying`);
+        } else {
+          const body = await res.text();
+          if (res.status === 402) {
+            AI_CREDITS_EXHAUSTED = true;
+            console.error(`[${label}] AI credits exhausted (402). Aborting AI usage for this run.`);
+            return null;
+          }
+          if (res.status === 429 || res.status >= 500) {
+            const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
+            console.error(`[${label}] AI ${res.status} on ${model} (attempt ${attempt}/${attempts}) — waiting ${wait}ms`);
+            await sleep(wait);
+            continue;
+          }
+          console.error(`[${label}] AI ${res.status} on ${model}: ${body.slice(0, 300)}`);
+          break; // non-retryable for this model — try next model
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
+        console.error(`[${label}] AI network error on ${model} (attempt ${attempt}/${attempts}):`, err instanceof Error ? err.message : err);
+        await sleep(wait);
+      }
+    }
+    console.error(`[${label}] falling back from ${model}`);
+  }
+
+  return null;
+}
+
+async function legacyValidateImageUrl(url: string, timeoutMs = 5000): Promise<boolean> {
+  if (!url) return false;
+  if (url.startsWith('data:')) return false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) return false;
+    const len = parseInt(res.headers.get('content-length') || '0', 10);
+    // Reject tiny tracker/icon images (< 8KB)
+    if (len > 0 && len < 8000) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Use Gemini to extract the main entity (game / franchise / characters)
 // from the article so we can search images that truly match the topic.
 async function extractTopicEntity(
