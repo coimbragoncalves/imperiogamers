@@ -124,6 +124,19 @@ const AdminAI = () => {
     },
   });
 
+  // Hydrate the content-type selection from saved settings (used by the scheduler too)
+  useEffect(() => {
+    const saved = settings?.content_types;
+    if (Array.isArray(saved)) {
+      setContentTypes({
+        news: saved.includes('news'),
+        review: saved.includes('review'),
+        trailer: saved.includes('trailer'),
+        curiogame: saved.includes('curiogame'),
+      });
+    }
+  }, [settings?.content_types]);
+
   const toggleAI = () => {
     updateSettings.mutate({ is_enabled: !settings?.is_enabled });
   };
