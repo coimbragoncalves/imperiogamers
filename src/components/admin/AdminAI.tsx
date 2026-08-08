@@ -295,9 +295,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="news" 
                 checked={contentTypes.news}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, news: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('news', checked === true)}
               />
               <Label htmlFor="news" className="flex items-center gap-2 cursor-pointer">
                 <Newspaper className="h-4 w-4 text-primary" />
@@ -309,9 +307,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="review" 
                 checked={contentTypes.review}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, review: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('review', checked === true)}
               />
               <Label htmlFor="review" className="flex items-center gap-2 cursor-pointer">
                 <Star className="h-4 w-4 text-gaming-gold" />
@@ -323,9 +319,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="trailer" 
                 checked={contentTypes.trailer}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, trailer: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('trailer', checked === true)}
               />
               <Label htmlFor="trailer" className="flex items-center gap-2 cursor-pointer">
                 <Film className="h-4 w-4 text-accent" />
@@ -337,13 +331,11 @@ const AdminAI = () => {
               <Checkbox
                 id="curiogame"
                 checked={contentTypes.curiogame}
-                onCheckedChange={(checked) =>
-                  setContentTypes(prev => ({ ...prev, curiogame: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('curiogame', checked === true)}
               />
               <Label htmlFor="curiogame" className="flex items-center gap-2 cursor-pointer">
                 <span className="text-base">🎮</span>
-                CurioGame
+                CurioGame (fofocas e curiosidades)
               </Label>
             </div>
           </div>
