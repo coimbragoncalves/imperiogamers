@@ -410,37 +410,53 @@ const AdminAI = () => {
         {settings?.facebook_crosspost_enabled && (
           <div className="mt-5 pt-5 border-t space-y-3">
             <p className="text-sm font-medium">Formato da publicação no Facebook</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([
-                {
-                  value: 'card' as const,
-                  label: 'Card + resumo',
-                  hint: 'Publica o título, o resumo e o card com a imagem de capa e link para o site.',
-                },
-                {
-                  value: 'full' as const,
-                  label: 'Conteúdo completo',
-                  hint: 'Publica a notícia/review inteira com todas as fotos do post, sem card nem link.',
-                },
-              ]).map((opt) => {
-                const active = (settings?.facebook_post_mode || 'card') === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateSettings.mutate({ facebook_post_mode: opt.value })}
-                    className={`text-left rounded-lg border p-3 transition-colors ${
-                      active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
-                    }`}
-                  >
-                    <span className="block font-medium text-sm">{opt.label}</span>
-                    <span className="block text-xs text-muted-foreground mt-1">{opt.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <ul className="text-sm text-muted-foreground space-y-1.5">
+              <li>• <strong>Notícias, Reviews e CurioGame</strong>: texto completo + todas as fotos do post (até 10).</li>
+              <li>• <strong>Trailers</strong>: apenas o card com a imagem de capa — sem link na legenda (o card já leva ao site).</li>
+            </ul>
           </div>
         )}
+      </Card>
+
+      {/* Horários das publicações */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Clock className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Horários das publicações</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Horários (fuso de Angola) em que a IA gera e publica automaticamente.
+        </p>
+        <div className="flex gap-2 mb-4">
+          <Input
+            type="time"
+            value={newTime}
+            onChange={(e) => setNewTime(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addTime()}
+            className="max-w-[160px]"
+          />
+          <Button onClick={addTime} size="icon">
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(settings?.schedule_times || []).length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhum horário definido — a IA não publica automaticamente.</p>
+          )}
+          {(settings?.schedule_times || []).map((time) => (
+            <Badge key={time} variant="secondary" className="gap-1 pl-3 pr-1 py-1.5">
+              {time}
+              <button
+                type="button"
+                onClick={() => removeTime(time)}
+                className="ml-1 rounded p-0.5 hover:bg-destructive/20"
+                aria-label={`Remover ${time}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
       </Card>
 
       <Card className={`p-4 ${settings?.is_enabled ? 'border-primary/50 bg-primary/5' : 'border-muted'}`}>
