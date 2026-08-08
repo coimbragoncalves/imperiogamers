@@ -1498,6 +1498,55 @@ serve(async (req) => {
       );
     }
 
+    // ---- Scheduling (automatic runs only) --------------------------------
+    // The cron pings this function every few minutes; we only run when the
+    // current Angola time matches one of the admin-defined schedule_times.
+    if (!manualRun) {
+      const times = Array.isArray(settings.schedule_times) ? (settings.schedule_times as string[]) : [];
+      const nowLuanda = new Date(Date.now() + 60 * 60 * 1000); // UTC+1, no DST
+      const nowMinutes = nowLuanda.getUTCHours() * 60 + nowLuanda.getUTCMinutes();
+      const dueSlot = times.find((t) => {
+        const [h, m] = String(t).split(':').map((n) => parseInt(n, 10));
+        if (Number.isNaN(h)) return false;
+        const slot = h * 60 + (m || 0);
+        const diff = nowMinutes - slot;
+        return diff >= 0 && diff < 15; // 15-minute window after each slot
+      });
+
+      if (!dueSlot) {
+        console.log(`No schedule slot due (Luanda ${nowLuanda.toISOString().slice(11, 16)}), skipping.`);
+        return new Response(JSON.stringify({ success: true, skipped: 'not_scheduled' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Avoid running twice in the same slot window
+      if (settings.last_run_at) {
+        const sinceLastRun = Date.now() - new Date(settings.last_run_at as string).getTime();
+        if (sinceLastRun < 40 * 60 * 1000) {
+          console.log('Already ran recently, skipping duplicate slot execution.');
+          return new Response(JSON.stringify({ success: true, skipped: 'already_ran' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // Mark immediately so overlapping cron pings don't double-run
+      await supabase.from('ai_settings').update({ last_run_at: new Date().toISOString() }).eq('id', settings.id);
+      console.log(`Scheduled run for slot ${dueSlot} (Luanda time).`);
+    }
+
+    // Content types: automatic runs follow the admin selection saved in settings
+    if (!explicitTypes) {
+      const saved = Array.isArray((settings as Record<string, unknown>).content_types)
+        ? ((settings as Record<string, unknown>).content_types as string[]).filter((t) =>
+            ['news', 'review', 'trailer', 'curiogame'].includes(t),
+          )
+        : [];
+      contentTypes = saved.length > 0 ? saved : ['news', 'review', 'trailer', 'curiogame'];
+      console.log('Content types from settings:', contentTypes);
+    }
+
     const sourceSites = settings.source_sites as string[];
     const youtubeChannels = settings.youtube_channels as string[];
     
