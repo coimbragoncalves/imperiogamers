@@ -1382,7 +1382,9 @@ async function crossPostToFacebook(post: {
     curiogame: '#curiogame #curiosidades #games',
   };
   const tagLine = `${tags[post.contentType] || '#games'} #ImperioGamers`;
-  const mode = post.mode === 'full' ? 'full' : 'card';
+  // Rule: trailers go as a link card only (no link in the caption — the card is clickable).
+  // News, reviews and curiogame always go with the full text plus every photo.
+  const mode: 'card' | 'full' = post.contentType === 'trailer' ? 'card' : 'full';
   const images = (post.images || []).filter((u) => typeof u === 'string' && u.startsWith('http')).slice(0, 10);
 
   const message =
@@ -1391,7 +1393,7 @@ async function crossPostToFacebook(post: {
           .filter(Boolean)
           .join('\n\n')
           .slice(0, 60000)
-      : `${post.title}\n\n${post.description}\n\n${link}\n\n${tagLine}`;
+      : `${post.title}\n\n${post.description}\n\n${tagLine}`;
 
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/publish-facebook`, {
