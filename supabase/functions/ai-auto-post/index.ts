@@ -1848,46 +1848,37 @@ serve(async (req) => {
       ? uniqueCandidates.filter(item => item.contentType === 'curiogame')
       : [];
     
-    // Build the final list: postsPerType of each selected type
-    const itemsToProcess: NewsItem[] = [];
-    
-    // Add up to postsPerType news items (if selected)
-    if (contentTypes.includes('news')) {
-      for (const item of newsOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'news').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
-    
-    // Add up to postsPerType reviews (if selected)
-    if (contentTypes.includes('review')) {
-      for (const item of reviewsOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'review').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
-    
-    // Add up to postsPerType trailers (if selected)
-    if (contentTypes.includes('trailer')) {
-      for (const item of trailersOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'trailer').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
+    // Per-type queues WITH RESERVE: we keep every candidate available so that a
+    // failed/duplicated/imageless item is automatically replaced by the next one
+    // until we reach postsPerType for that type.
+    const queues: Record<string, NewsItem[]> = {
+      news: [...newsOnly],
+      review: [...reviewsOnly],
+      trailer: [...trailersOnly],
+      curiogame: [...curioOnly],
+    };
 
-    // Add up to postsPerType curiogame items (if selected)
-    if (contentTypes.includes('curiogame')) {
-      for (const item of curioOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'curiogame').length < postsPerType) {
-          itemsToProcess.push(item);
+    const activeTypes = contentTypes.filter((t: string) => (queues[t] || []).length > 0);
+    const createdByType: Record<string, number> = {};
+    const attemptsByType: Record<string, number> = {};
+    const maxAttemptsPerType = Math.max(postsPerType * 4, postsPerType + 6);
+
+    const nextItem = (): NewsItem | null => {
+      for (const t of activeTypes) {
+        if ((createdByType[t] || 0) >= postsPerType) continue;
+        if ((attemptsByType[t] || 0) >= maxAttemptsPerType) continue;
+        const queue = queues[t];
+        if (queue && queue.length > 0) {
+          attemptsByType[t] = (attemptsByType[t] || 0) + 1;
+          return queue.shift() as NewsItem;
         }
       }
-    }
-    
-    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers, ${itemsToProcess.filter(i => i.contentType === 'curiogame').length} curiogame`);
+      return null;
+    };
+
+    console.log(
+      `Target ${postsPerType} per type. Reserve pool: ${queues.news.length} news, ${queues.review.length} reviews, ${queues.trailer.length} trailers, ${queues.curiogame.length} curiogame`
+    );
 
     const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: recentLogs }, { data: recentArticles }] = await Promise.all([
@@ -1914,8 +1905,14 @@ serve(async (req) => {
 
     // Process each news item with AI
     let postsCreated = 0;
-    
-    for (const item of itemsToProcess) {
+
+    while (true) {
+      if (AI_CREDITS_EXHAUSTED) {
+        console.error('Stopping run: AI credits exhausted.');
+        break;
+      }
+      const item = nextItem();
+      if (!item) break;
       try {
         const normalizedSourceUrl = normalizeSourceUrl(item.sourceUrl);
         const itemYoutubeId = extractYouTubeId(item.youtubeUrl);
