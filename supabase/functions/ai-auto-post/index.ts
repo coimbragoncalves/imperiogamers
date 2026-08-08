@@ -1961,39 +1961,23 @@ serve(async (req) => {
         }
         // ===== END IMAGE ENRICHMENT =====
 
-        // Use AI to rewrite the content in Portuguese
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-3-flash-preview',
-            messages: buildAiMessages(item),
-          }),
-        });
+        // Use AI to rewrite the content in Portuguese (with retries + model fallback)
+        const aiContent = await callAiChat(
+          lovableKey,
+          { messages: buildAiMessages(item) },
+          { label: `write-${item.contentType}`, attemptsPerModel: 3, timeoutMs: 120000 }
+        );
 
-        if (!aiResponse.ok) {
-          const errorText = await aiResponse.text();
-          console.error('AI error:', errorText);
-          
-          // Log the error
+        if (!aiContent) {
           await supabase.from('ai_post_logs').insert({
             source_url: item.sourceUrl,
             source_site: item.sourceSite,
             content_type: item.contentType,
             status: 'error',
-            error_message: `AI error: ${aiResponse.status}`
+            error_message: AI_CREDITS_EXHAUSTED
+              ? 'Créditos de IA esgotados'
+              : 'IA não respondeu após múltiplas tentativas'
           });
-          continue;
-        }
-
-        const aiData = await aiResponse.json();
-        const aiContent = aiData.choices?.[0]?.message?.content;
-        
-        if (!aiContent) {
-          console.error('No AI content received');
           continue;
         }
 
