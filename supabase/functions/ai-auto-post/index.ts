@@ -422,14 +422,9 @@ async function extractTopicEntity(
   lovableKey: string
 ): Promise<TopicEntity | null> {
   try {
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+    const txt = await callAiChat(
+      lovableKey,
+      {
         messages: [
           {
             role: 'system',
@@ -440,11 +435,9 @@ async function extractTopicEntity(
             content: `Title: ${item.title}\nDescription: ${item.description}\nContent:\n${(item.content || '').slice(0, 1800)}`,
           },
         ],
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const txt = data.choices?.[0]?.message?.content;
+      },
+      { label: 'topic-entity', attemptsPerModel: 2, timeoutMs: 45000 }
+    );
     if (!txt) return null;
     const parsed = JSON.parse(cleanAiJsonResponse(txt));
     if (!parsed?.gameTitle) return null;
