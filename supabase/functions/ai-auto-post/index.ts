@@ -338,6 +338,83 @@ async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean>
   }
 }
 
+// ============================================================
+// Resilient AI gateway caller: retries transient failures,
+// falls back to alternative models and surfaces credit issues.
+// ============================================================
+const AI_MODEL_CHAIN = [
+  'google/gemini-3-flash-preview',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-flash-lite',
+];
+
+let AI_CREDITS_EXHAUSTED = false;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function callAiChat(
+  lovableKey: string,
+  payload: Record<string, unknown>,
+  opts: { attemptsPerModel?: number; timeoutMs?: number; label?: string } = {}
+): Promise<string | null> {
+  if (AI_CREDITS_EXHAUSTED) return null;
+
+  const attempts = opts.attemptsPerModel ?? 3;
+  const timeoutMs = opts.timeoutMs ?? 90000;
+  const label = opts.label ?? 'ai';
+  const requestedModel = typeof payload.model === 'string' ? payload.model : AI_MODEL_CHAIN[0];
+  const models = [requestedModel, ...AI_MODEL_CHAIN.filter((m) => m !== requestedModel)];
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${lovableKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ...payload, model }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.choices?.[0]?.message?.content;
+          if (content) return content as string;
+          console.error(`[${label}] empty AI content (${model}), retrying`);
+        } else {
+          const body = await res.text();
+          if (res.status === 402) {
+            AI_CREDITS_EXHAUSTED = true;
+            console.error(`[${label}] AI credits exhausted (402). Aborting AI usage for this run.`);
+            return null;
+          }
+          if (res.status === 429 || res.status >= 500) {
+            const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
+            console.error(`[${label}] AI ${res.status} on ${model} (attempt ${attempt}/${attempts}) — waiting ${wait}ms`);
+            await sleep(wait);
+            continue;
+          }
+          console.error(`[${label}] AI ${res.status} on ${model}: ${body.slice(0, 300)}`);
+          break; // non-retryable for this model — try next model
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
+        console.error(`[${label}] AI network error on ${model} (attempt ${attempt}/${attempts}):`, err instanceof Error ? err.message : err);
+        await sleep(wait);
+      }
+    }
+    console.error(`[${label}] falling back from ${model}`);
+  }
+
+  return null;
+}
+
 // Use Gemini to extract the main entity (game / franchise / characters)
 // from the article so we can search images that truly match the topic.
 async function extractTopicEntity(
@@ -345,14 +422,9 @@ async function extractTopicEntity(
   lovableKey: string
 ): Promise<TopicEntity | null> {
   try {
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+    const txt = await callAiChat(
+      lovableKey,
+      {
         messages: [
           {
             role: 'system',
@@ -363,11 +435,9 @@ async function extractTopicEntity(
             content: `Title: ${item.title}\nDescription: ${item.description}\nContent:\n${(item.content || '').slice(0, 1800)}`,
           },
         ],
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const txt = data.choices?.[0]?.message?.content;
+      },
+      { label: 'topic-entity', attemptsPerModel: 2, timeoutMs: 45000 }
+    );
     if (!txt) return null;
     const parsed = JSON.parse(cleanAiJsonResponse(txt));
     if (!parsed?.gameTitle) return null;
@@ -1305,14 +1375,9 @@ async function generateCurioGameTopic(
 ): Promise<NewsItem | null> {
   try {
     const avoid = recentTitles.slice(0, 30).join(' | ');
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+    const txt = await callAiChat(
+      lovableKey,
+      {
         messages: [
           {
             role: 'system',
@@ -1323,11 +1388,9 @@ async function generateCurioGameTopic(
             content: `Evite repetir estes temas já publicados: ${avoid}\n\nGere agora uma nova pauta surpreendente.`,
           },
         ],
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const txt = data.choices?.[0]?.message?.content;
+      },
+      { label: 'curiogame-topic', attemptsPerModel: 2, timeoutMs: 60000 }
+    );
     if (!txt) return null;
     const parsed = JSON.parse(cleanAiJsonResponse(txt));
     if (!parsed?.topic || !parsed?.briefing) return null;
@@ -1719,7 +1782,8 @@ serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(30);
       const recentTitles = (recentCurio || []).map((r: { title: string }) => r.title);
-      for (let i = 0; i < postsPerType * 2; i++) {
+      for (let i = 0; i < postsPerType * 3; i++) {
+        if (AI_CREDITS_EXHAUSTED) break;
         const topic = await generateCurioGameTopic(lovableKey, recentTitles);
         if (topic) {
           newsItems.push(topic);
@@ -1785,46 +1849,37 @@ serve(async (req) => {
       ? uniqueCandidates.filter(item => item.contentType === 'curiogame')
       : [];
     
-    // Build the final list: postsPerType of each selected type
-    const itemsToProcess: NewsItem[] = [];
-    
-    // Add up to postsPerType news items (if selected)
-    if (contentTypes.includes('news')) {
-      for (const item of newsOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'news').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
-    
-    // Add up to postsPerType reviews (if selected)
-    if (contentTypes.includes('review')) {
-      for (const item of reviewsOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'review').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
-    
-    // Add up to postsPerType trailers (if selected)
-    if (contentTypes.includes('trailer')) {
-      for (const item of trailersOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'trailer').length < postsPerType) {
-          itemsToProcess.push(item);
-        }
-      }
-    }
+    // Per-type queues WITH RESERVE: we keep every candidate available so that a
+    // failed/duplicated/imageless item is automatically replaced by the next one
+    // until we reach postsPerType for that type.
+    const queues: Record<string, NewsItem[]> = {
+      news: [...newsOnly],
+      review: [...reviewsOnly],
+      trailer: [...trailersOnly],
+      curiogame: [...curioOnly],
+    };
 
-    // Add up to postsPerType curiogame items (if selected)
-    if (contentTypes.includes('curiogame')) {
-      for (const item of curioOnly) {
-        if (itemsToProcess.filter(i => i.contentType === 'curiogame').length < postsPerType) {
-          itemsToProcess.push(item);
+    const activeTypes = contentTypes.filter((t: string) => (queues[t] || []).length > 0);
+    const createdByType: Record<string, number> = {};
+    const attemptsByType: Record<string, number> = {};
+    const maxAttemptsPerType = Math.max(postsPerType * 4, postsPerType + 6);
+
+    const nextItem = (): NewsItem | null => {
+      for (const t of activeTypes) {
+        if ((createdByType[t] || 0) >= postsPerType) continue;
+        if ((attemptsByType[t] || 0) >= maxAttemptsPerType) continue;
+        const queue = queues[t];
+        if (queue && queue.length > 0) {
+          attemptsByType[t] = (attemptsByType[t] || 0) + 1;
+          return queue.shift() as NewsItem;
         }
       }
-    }
-    
-    console.log(`Processing ${itemsToProcess.length} items (${postsPerType} per type): ${itemsToProcess.filter(i => i.contentType === 'news').length} news, ${itemsToProcess.filter(i => i.contentType === 'review').length} reviews, ${itemsToProcess.filter(i => i.contentType === 'trailer').length} trailers, ${itemsToProcess.filter(i => i.contentType === 'curiogame').length} curiogame`);
+      return null;
+    };
+
+    console.log(
+      `Target ${postsPerType} per type. Reserve pool: ${queues.news.length} news, ${queues.review.length} reviews, ${queues.trailer.length} trailers, ${queues.curiogame.length} curiogame`
+    );
 
     const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: recentLogs }, { data: recentArticles }] = await Promise.all([
@@ -1851,8 +1906,14 @@ serve(async (req) => {
 
     // Process each news item with AI
     let postsCreated = 0;
-    
-    for (const item of itemsToProcess) {
+
+    while (true) {
+      if (AI_CREDITS_EXHAUSTED) {
+        console.error('Stopping run: AI credits exhausted.');
+        break;
+      }
+      const item = nextItem();
+      if (!item) break;
       try {
         const normalizedSourceUrl = normalizeSourceUrl(item.sourceUrl);
         const itemYoutubeId = extractYouTubeId(item.youtubeUrl);
@@ -1901,39 +1962,23 @@ serve(async (req) => {
         }
         // ===== END IMAGE ENRICHMENT =====
 
-        // Use AI to rewrite the content in Portuguese
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-3-flash-preview',
-            messages: buildAiMessages(item),
-          }),
-        });
+        // Use AI to rewrite the content in Portuguese (with retries + model fallback)
+        const aiContent = await callAiChat(
+          lovableKey,
+          { messages: buildAiMessages(item) },
+          { label: `write-${item.contentType}`, attemptsPerModel: 3, timeoutMs: 120000 }
+        );
 
-        if (!aiResponse.ok) {
-          const errorText = await aiResponse.text();
-          console.error('AI error:', errorText);
-          
-          // Log the error
+        if (!aiContent) {
           await supabase.from('ai_post_logs').insert({
             source_url: item.sourceUrl,
             source_site: item.sourceSite,
             content_type: item.contentType,
             status: 'error',
-            error_message: `AI error: ${aiResponse.status}`
+            error_message: AI_CREDITS_EXHAUSTED
+              ? 'Créditos de IA esgotados'
+              : 'IA não respondeu após múltiplas tentativas'
           });
-          continue;
-        }
-
-        const aiData = await aiResponse.json();
-        const aiContent = aiData.choices?.[0]?.message?.content;
-        
-        if (!aiContent) {
-          console.error('No AI content received');
           continue;
         }
 
@@ -2103,6 +2148,7 @@ serve(async (req) => {
         });
 
         postsCreated++;
+        createdByType[item.contentType] = (createdByType[item.contentType] || 0) + 1;
         console.log(`Created article: ${article.title}`);
 
       } catch (error) {
@@ -2153,12 +2199,24 @@ serve(async (req) => {
       console.error('Auto-cleanup error:', cleanupErr);
     }
 
+    const shortfall = activeTypes
+      .map((t: string) => ({ type: t, created: createdByType[t] || 0 }))
+      .filter((r) => r.created < postsPerType);
+    if (shortfall.length > 0) {
+      console.log(
+        `Run finished below target for: ${shortfall.map((s) => `${s.type} ${s.created}/${postsPerType}`).join(', ')}` +
+          (AI_CREDITS_EXHAUSTED ? ' — motivo: créditos de IA esgotados' : ' — reserva de candidatos esgotada')
+      );
+    }
+
     return new Response(
-      JSON.stringify({ 
-        success: true, 
+      JSON.stringify({
+        success: true,
         message: `Created ${postsCreated} posts`,
         postsCreated,
-          itemsFound: uniqueCandidates.length
+        createdByType,
+        creditsExhausted: AI_CREDITS_EXHAUSTED,
+        itemsFound: uniqueCandidates.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
