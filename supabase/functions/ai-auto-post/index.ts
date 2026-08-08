@@ -415,26 +415,6 @@ async function callAiChat(
   return null;
 }
 
-async function legacyValidateImageUrl(url: string, timeoutMs = 5000): Promise<boolean> {
-  if (!url) return false;
-  if (url.startsWith('data:')) return false;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) return false;
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.startsWith('image/')) return false;
-    const len = parseInt(res.headers.get('content-length') || '0', 10);
-    // Reject tiny tracker/icon images (< 8KB)
-    if (len > 0 && len < 8000) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // Use Gemini to extract the main entity (game / franchise / characters)
 // from the article so we can search images that truly match the topic.
 async function extractTopicEntity(
