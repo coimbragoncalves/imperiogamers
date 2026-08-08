@@ -1,0 +1,1 @@
+ALTER TABLE public.ai_settings ADD COLUMN IF NOT EXISTS content_types jsonb NOT NULL DEFAULT '["news","review","trailer","curiogame"]'::jsonb;

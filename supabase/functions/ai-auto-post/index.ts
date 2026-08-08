@@ -1382,7 +1382,9 @@ async function crossPostToFacebook(post: {
     curiogame: '#curiogame #curiosidades #games',
   };
   const tagLine = `${tags[post.contentType] || '#games'} #ImperioGamers`;
-  const mode = post.mode === 'full' ? 'full' : 'card';
+  // Rule: trailers go as a link card only (no link in the caption — the card is clickable).
+  // News, reviews and curiogame always go with the full text plus every photo.
+  const mode: 'card' | 'full' = post.contentType === 'trailer' ? 'card' : 'full';
   const images = (post.images || []).filter((u) => typeof u === 'string' && u.startsWith('http')).slice(0, 10);
 
   const message =
@@ -1391,7 +1393,7 @@ async function crossPostToFacebook(post: {
           .filter(Boolean)
           .join('\n\n')
           .slice(0, 60000)
-      : `${post.title}\n\n${post.description}\n\n${link}\n\n${tagLine}`;
+      : `${post.title}\n\n${post.description}\n\n${tagLine}`;
 
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/publish-facebook`, {
@@ -1430,6 +1432,7 @@ serve(async (req) => {
     let postsPerType = 3; // Default: 3 posts per type
     let contentTypes: string[] = ['news', 'review', 'trailer']; // Default: all types
     let manualRun = false;
+    let explicitTypes = false;
     try {
       const body = await req.json();
       forceNew = body?.forceNew === true;
@@ -1439,6 +1442,7 @@ serve(async (req) => {
       }
       if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
         contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer', 'curiogame'].includes(t));
+        explicitTypes = contentTypes.length > 0;
       }
     } catch {
       // Corpo vazio, execução automática (cron)
@@ -1492,6 +1496,55 @@ serve(async (req) => {
         JSON.stringify({ success: false, error: 'AI auto-posting is disabled' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // ---- Scheduling (automatic runs only) --------------------------------
+    // The cron pings this function every few minutes; we only run when the
+    // current Angola time matches one of the admin-defined schedule_times.
+    if (!manualRun) {
+      const times = Array.isArray(settings.schedule_times) ? (settings.schedule_times as string[]) : [];
+      const nowLuanda = new Date(Date.now() + 60 * 60 * 1000); // UTC+1, no DST
+      const nowMinutes = nowLuanda.getUTCHours() * 60 + nowLuanda.getUTCMinutes();
+      const dueSlot = times.find((t) => {
+        const [h, m] = String(t).split(':').map((n) => parseInt(n, 10));
+        if (Number.isNaN(h)) return false;
+        const slot = h * 60 + (m || 0);
+        const diff = nowMinutes - slot;
+        return diff >= 0 && diff < 15; // 15-minute window after each slot
+      });
+
+      if (!dueSlot) {
+        console.log(`No schedule slot due (Luanda ${nowLuanda.toISOString().slice(11, 16)}), skipping.`);
+        return new Response(JSON.stringify({ success: true, skipped: 'not_scheduled' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Avoid running twice in the same slot window
+      if (settings.last_run_at) {
+        const sinceLastRun = Date.now() - new Date(settings.last_run_at as string).getTime();
+        if (sinceLastRun < 40 * 60 * 1000) {
+          console.log('Already ran recently, skipping duplicate slot execution.');
+          return new Response(JSON.stringify({ success: true, skipped: 'already_ran' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // Mark immediately so overlapping cron pings don't double-run
+      await supabase.from('ai_settings').update({ last_run_at: new Date().toISOString() }).eq('id', settings.id);
+      console.log(`Scheduled run for slot ${dueSlot} (Luanda time).`);
+    }
+
+    // Content types: automatic runs follow the admin selection saved in settings
+    if (!explicitTypes) {
+      const saved = Array.isArray((settings as Record<string, unknown>).content_types)
+        ? ((settings as Record<string, unknown>).content_types as string[]).filter((t) =>
+            ['news', 'review', 'trailer', 'curiogame'].includes(t),
+          )
+        : [];
+      contentTypes = saved.length > 0 ? saved : ['news', 'review', 'trailer', 'curiogame'];
+      console.log('Content types from settings:', contentTypes);
     }
 
     const sourceSites = settings.source_sites as string[];

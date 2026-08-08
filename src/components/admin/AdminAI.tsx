@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,7 @@ interface AISettings {
   youtube_channels: string[];
   schedule_times: string[];
   last_run_at: string | null;
+  content_types: string[];
   facebook_crosspost_enabled: boolean;
   facebook_post_mode: 'card' | 'full';
   updated_at: string;
@@ -66,6 +67,7 @@ const AdminAI = () => {
   const queryClient = useQueryClient();
   const [newSite, setNewSite] = useState('');
   const [newChannel, setNewChannel] = useState('');
+  const [newTime, setNewTime] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [postsPerType, setPostsPerType] = useState(3);
   const [contentTypes, setContentTypes] = useState<ContentTypes>({
@@ -122,6 +124,19 @@ const AdminAI = () => {
     },
   });
 
+  // Hydrate the content-type selection from saved settings (used by the scheduler too)
+  useEffect(() => {
+    const saved = settings?.content_types;
+    if (Array.isArray(saved)) {
+      setContentTypes({
+        news: saved.includes('news'),
+        review: saved.includes('review'),
+        trailer: saved.includes('trailer'),
+        curiogame: saved.includes('curiogame'),
+      });
+    }
+  }, [settings?.content_types]);
+
   const toggleAI = () => {
     updateSettings.mutate({ is_enabled: !settings?.is_enabled });
   };
@@ -150,6 +165,30 @@ const AdminAI = () => {
     if (!settings) return;
     const channels = settings.youtube_channels.filter(c => c !== channel);
     updateSettings.mutate({ youtube_channels: channels });
+  };
+
+  const addTime = () => {
+    if (!settings) return;
+    const value = newTime.trim();
+    if (!/^\d{2}:\d{2}$/.test(value)) {
+      toast({ title: 'Horário inválido', description: 'Use o formato HH:MM', variant: 'destructive' });
+      return;
+    }
+    const times = Array.from(new Set([...(settings.schedule_times || []), value])).sort();
+    updateSettings.mutate({ schedule_times: times });
+    setNewTime('');
+  };
+
+  const removeTime = (time: string) => {
+    if (!settings) return;
+    updateSettings.mutate({ schedule_times: (settings.schedule_times || []).filter(t => t !== time) });
+  };
+
+  const toggleType = (type: keyof ContentTypes, checked: boolean) => {
+    const next = { ...contentTypes, [type]: checked };
+    setContentTypes(next);
+    const list = Object.entries(next).filter(([, v]) => v).map(([k]) => k);
+    if (settings?.id) updateSettings.mutate({ content_types: list });
   };
 
   const runNow = async () => {
@@ -256,9 +295,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="news" 
                 checked={contentTypes.news}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, news: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('news', checked === true)}
               />
               <Label htmlFor="news" className="flex items-center gap-2 cursor-pointer">
                 <Newspaper className="h-4 w-4 text-primary" />
@@ -270,9 +307,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="review" 
                 checked={contentTypes.review}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, review: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('review', checked === true)}
               />
               <Label htmlFor="review" className="flex items-center gap-2 cursor-pointer">
                 <Star className="h-4 w-4 text-gaming-gold" />
@@ -284,9 +319,7 @@ const AdminAI = () => {
               <Checkbox 
                 id="trailer" 
                 checked={contentTypes.trailer}
-                onCheckedChange={(checked) => 
-                  setContentTypes(prev => ({ ...prev, trailer: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('trailer', checked === true)}
               />
               <Label htmlFor="trailer" className="flex items-center gap-2 cursor-pointer">
                 <Film className="h-4 w-4 text-accent" />
@@ -298,13 +331,11 @@ const AdminAI = () => {
               <Checkbox
                 id="curiogame"
                 checked={contentTypes.curiogame}
-                onCheckedChange={(checked) =>
-                  setContentTypes(prev => ({ ...prev, curiogame: checked === true }))
-                }
+                onCheckedChange={(checked) => toggleType('curiogame', checked === true)}
               />
               <Label htmlFor="curiogame" className="flex items-center gap-2 cursor-pointer">
                 <span className="text-base">🎮</span>
-                CurioGame
+                CurioGame (fofocas e curiosidades)
               </Label>
             </div>
           </div>
@@ -379,37 +410,53 @@ const AdminAI = () => {
         {settings?.facebook_crosspost_enabled && (
           <div className="mt-5 pt-5 border-t space-y-3">
             <p className="text-sm font-medium">Formato da publicação no Facebook</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([
-                {
-                  value: 'card' as const,
-                  label: 'Card + resumo',
-                  hint: 'Publica o título, o resumo e o card com a imagem de capa e link para o site.',
-                },
-                {
-                  value: 'full' as const,
-                  label: 'Conteúdo completo',
-                  hint: 'Publica a notícia/review inteira com todas as fotos do post, sem card nem link.',
-                },
-              ]).map((opt) => {
-                const active = (settings?.facebook_post_mode || 'card') === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateSettings.mutate({ facebook_post_mode: opt.value })}
-                    className={`text-left rounded-lg border p-3 transition-colors ${
-                      active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
-                    }`}
-                  >
-                    <span className="block font-medium text-sm">{opt.label}</span>
-                    <span className="block text-xs text-muted-foreground mt-1">{opt.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <ul className="text-sm text-muted-foreground space-y-1.5">
+              <li>• <strong>Notícias, Reviews e CurioGame</strong>: texto completo + todas as fotos do post (até 10).</li>
+              <li>• <strong>Trailers</strong>: apenas o card com a imagem de capa — sem link na legenda (o card já leva ao site).</li>
+            </ul>
           </div>
         )}
+      </Card>
+
+      {/* Horários das publicações */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Clock className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Horários das publicações</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Horários (fuso de Angola) em que a IA gera e publica automaticamente.
+        </p>
+        <div className="flex gap-2 mb-4">
+          <Input
+            type="time"
+            value={newTime}
+            onChange={(e) => setNewTime(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addTime()}
+            className="max-w-[160px]"
+          />
+          <Button onClick={addTime} size="icon">
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(settings?.schedule_times || []).length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhum horário definido — a IA não publica automaticamente.</p>
+          )}
+          {(settings?.schedule_times || []).map((time) => (
+            <Badge key={time} variant="secondary" className="gap-1 pl-3 pr-1 py-1.5">
+              {time}
+              <button
+                type="button"
+                onClick={() => removeTime(time)}
+                className="ml-1 rounded p-0.5 hover:bg-destructive/20"
+                aria-label={`Remover ${time}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
       </Card>
 
       <Card className={`p-4 ${settings?.is_enabled ? 'border-primary/50 bg-primary/5' : 'border-muted'}`}>

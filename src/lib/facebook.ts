@@ -62,20 +62,11 @@ export async function publishArticleToFacebook(post: {
   const link = `${SITE_URL}/${path}/${post.slug}`;
   const tags = `${TAGS[post.contentType] || '#games'} #ImperioGamers`;
 
-  // Sharing mode chosen by the admin in the AI panel
-  let mode: 'card' | 'full' = 'card';
-  try {
-    const { data: settings } = await supabase
-      .from('ai_settings')
-      .select('facebook_post_mode')
-      .limit(1)
-      .maybeSingle();
-    if ((settings as { facebook_post_mode?: string } | null)?.facebook_post_mode === 'full') mode = 'full';
-  } catch {
-    /* keep default */
-  }
+  // Rule: trailers go as a link card only (no link in the caption).
+  // News, reviews and curiogame go with the full text plus every photo.
+  const mode: 'card' | 'full' = post.contentType === 'trailer' ? 'card' : 'full';
 
-  let message = [post.title, post.description || '', link, tags].filter(Boolean).join('\n\n');
+  let message = [post.title, post.description || '', tags].filter(Boolean).join('\n\n');
   let images: string[] = [];
 
   if (mode === 'full') {
