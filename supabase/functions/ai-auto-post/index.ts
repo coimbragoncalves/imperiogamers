@@ -1375,14 +1375,9 @@ async function generateCurioGameTopic(
 ): Promise<NewsItem | null> {
   try {
     const avoid = recentTitles.slice(0, 30).join(' | ');
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
+    const txt = await callAiChat(
+      lovableKey,
+      {
         messages: [
           {
             role: 'system',
@@ -1393,11 +1388,9 @@ async function generateCurioGameTopic(
             content: `Evite repetir estes temas já publicados: ${avoid}\n\nGere agora uma nova pauta surpreendente.`,
           },
         ],
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const txt = data.choices?.[0]?.message?.content;
+      },
+      { label: 'curiogame-topic', attemptsPerModel: 2, timeoutMs: 60000 }
+    );
     if (!txt) return null;
     const parsed = JSON.parse(cleanAiJsonResponse(txt));
     if (!parsed?.topic || !parsed?.briefing) return null;
