@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,7 @@ interface AISettings {
   youtube_channels: string[];
   schedule_times: string[];
   last_run_at: string | null;
+  content_types: string[];
   facebook_crosspost_enabled: boolean;
   facebook_post_mode: 'card' | 'full';
   updated_at: string;
@@ -66,6 +67,7 @@ const AdminAI = () => {
   const queryClient = useQueryClient();
   const [newSite, setNewSite] = useState('');
   const [newChannel, setNewChannel] = useState('');
+  const [newTime, setNewTime] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [postsPerType, setPostsPerType] = useState(3);
   const [contentTypes, setContentTypes] = useState<ContentTypes>({
@@ -150,6 +152,30 @@ const AdminAI = () => {
     if (!settings) return;
     const channels = settings.youtube_channels.filter(c => c !== channel);
     updateSettings.mutate({ youtube_channels: channels });
+  };
+
+  const addTime = () => {
+    if (!settings) return;
+    const value = newTime.trim();
+    if (!/^\d{2}:\d{2}$/.test(value)) {
+      toast({ title: 'Horário inválido', description: 'Use o formato HH:MM', variant: 'destructive' });
+      return;
+    }
+    const times = Array.from(new Set([...(settings.schedule_times || []), value])).sort();
+    updateSettings.mutate({ schedule_times: times });
+    setNewTime('');
+  };
+
+  const removeTime = (time: string) => {
+    if (!settings) return;
+    updateSettings.mutate({ schedule_times: (settings.schedule_times || []).filter(t => t !== time) });
+  };
+
+  const toggleType = (type: keyof ContentTypes, checked: boolean) => {
+    const next = { ...contentTypes, [type]: checked };
+    setContentTypes(next);
+    const list = Object.entries(next).filter(([, v]) => v).map(([k]) => k);
+    if (settings?.id) updateSettings.mutate({ content_types: list });
   };
 
   const runNow = async () => {
