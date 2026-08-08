@@ -87,6 +87,7 @@ export type Database = {
       }
       ai_settings: {
         Row: {
+          content_types: Json
           created_at: string
           facebook_crosspost_enabled: boolean
           facebook_post_mode: string
@@ -99,6 +100,7 @@ export type Database = {
           youtube_channels: Json
         }
         Insert: {
+          content_types?: Json
           created_at?: string
           facebook_crosspost_enabled?: boolean
           facebook_post_mode?: string
@@ -111,6 +113,7 @@ export type Database = {
           youtube_channels?: Json
         }
         Update: {
+          content_types?: Json
           created_at?: string
           facebook_crosspost_enabled?: boolean
           facebook_post_mode?: string
