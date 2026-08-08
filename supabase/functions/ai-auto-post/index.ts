@@ -1782,7 +1782,8 @@ serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(30);
       const recentTitles = (recentCurio || []).map((r: { title: string }) => r.title);
-      for (let i = 0; i < postsPerType * 2; i++) {
+      for (let i = 0; i < postsPerType * 3; i++) {
+        if (AI_CREDITS_EXHAUSTED) break;
         const topic = await generateCurioGameTopic(lovableKey, recentTitles);
         if (topic) {
           newsItems.push(topic);
