@@ -2198,12 +2198,24 @@ serve(async (req) => {
       console.error('Auto-cleanup error:', cleanupErr);
     }
 
+    const shortfall = activeTypes
+      .map((t: string) => ({ type: t, created: createdByType[t] || 0 }))
+      .filter((r) => r.created < postsPerType);
+    if (shortfall.length > 0) {
+      console.log(
+        `Run finished below target for: ${shortfall.map((s) => `${s.type} ${s.created}/${postsPerType}`).join(', ')}` +
+          (AI_CREDITS_EXHAUSTED ? ' — motivo: créditos de IA esgotados' : ' — reserva de candidatos esgotada')
+      );
+    }
+
     return new Response(
-      JSON.stringify({ 
-        success: true, 
+      JSON.stringify({
+        success: true,
         message: `Created ${postsCreated} posts`,
         postsCreated,
-          itemsFound: uniqueCandidates.length
+        createdByType,
+        creditsExhausted: AI_CREDITS_EXHAUSTED,
+        itemsFound: uniqueCandidates.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
