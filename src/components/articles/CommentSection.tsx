@@ -45,35 +45,28 @@ const CommentSection = ({ articleId }: CommentSectionProps) => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      
-      // Fetch profiles and admin status for comments with user_id
-      const commentsWithProfiles = await Promise.all(
-        data.map(async (comment) => {
-          if (comment.user_id) {
-            const [profileResult, roleResult] = await Promise.all([
-              supabase
-                .from('profiles')
-                .select('username')
-                .eq('id', comment.user_id)
-                .single(),
-              supabase
-                .from('user_roles')
-                .select('role')
-                .eq('user_id', comment.user_id)
-                .eq('role', 'admin')
-                .maybeSingle()
-            ]);
-            
-            return { 
-              ...comment, 
-              profiles: profileResult.data,
-              isAdmin: !!roleResult.data
-            };
-          }
-          return { ...comment, profiles: null, isAdmin: false };
-        })
+
+      // Fetch author names/badges via a safe server-side helper (no direct profile reads)
+      const { data: authors } = await supabase.rpc('get_comment_authors', {
+        p_article_id: articleId,
+      });
+
+      const authorMap = new Map(
+        (authors ?? []).map((a: { user_id: string; username: string | null; is_admin: boolean }) => [
+          a.user_id,
+          a,
+        ])
       );
-      
+
+      const commentsWithProfiles = data.map((comment) => {
+        const author = comment.user_id ? authorMap.get(comment.user_id) : undefined;
+        return {
+          ...comment,
+          profiles: author ? { username: author.username } : null,
+          isAdmin: !!author?.is_admin,
+        };
+      });
+
       return commentsWithProfiles as Comment[];
     },
   });

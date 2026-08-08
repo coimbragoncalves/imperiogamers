@@ -539,6 +539,14 @@ export type Database = {
       }
       cleanup_oldest_articles: { Args: { p_count?: number }; Returns: number }
       generate_slug: { Args: { title: string }; Returns: string }
+      get_comment_authors: {
+        Args: { p_article_id: string }
+        Returns: {
+          is_admin: boolean
+          user_id: string
+          username: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
