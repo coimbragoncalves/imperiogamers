@@ -2147,6 +2147,7 @@ serve(async (req) => {
         });
 
         postsCreated++;
+        createdByType[item.contentType] = (createdByType[item.contentType] || 0) + 1;
         console.log(`Created article: ${article.title}`);
 
       } catch (error) {
