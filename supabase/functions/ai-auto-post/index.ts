@@ -1432,6 +1432,7 @@ serve(async (req) => {
     let postsPerType = 3; // Default: 3 posts per type
     let contentTypes: string[] = ['news', 'review', 'trailer']; // Default: all types
     let manualRun = false;
+    let explicitTypes = false;
     try {
       const body = await req.json();
       forceNew = body?.forceNew === true;
@@ -1441,6 +1442,7 @@ serve(async (req) => {
       }
       if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
         contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer', 'curiogame'].includes(t));
+        explicitTypes = contentTypes.length > 0;
       }
     } catch {
       // Corpo vazio, execução automática (cron)
