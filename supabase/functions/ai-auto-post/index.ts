@@ -1557,7 +1557,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-    const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableKey = Deno.env.get('LOVABLE_API_KEY') || '';
 
     if (!firecrawlKey) {
       return new Response(
@@ -1566,9 +1566,9 @@ serve(async (req) => {
       );
     }
 
-    if (!lovableKey) {
+    if (!lovableKey && !GEMINI_API_KEY) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Lovable API key not configured' }),
+        JSON.stringify({ success: false, error: 'No AI key configured (GEMINI_API_KEY or LOVABLE_API_KEY)' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
