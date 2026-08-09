@@ -350,6 +350,38 @@ const AI_MODEL_CHAIN = [
 
 let AI_CREDITS_EXHAUSTED = false;
 
+// ============================================================
+// Provider routing: prefer the project's own Google Gemini key
+// (no Lovable credits consumed). Falls back to the Lovable AI
+// Gateway when GEMINI_API_KEY is not configured.
+// ============================================================
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
+const GEMINI_OPENAI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+const LOVABLE_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions';
+
+// Models the direct Google endpoint understands (no vendor prefix).
+function toGoogleModel(model: string) {
+  const bare = model.replace(/^google\//, '');
+  const map: Record<string, string> = {
+    'gemini-3-flash-preview': 'gemini-2.5-flash',
+    'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
+  };
+  return map[bare] || bare;
+}
+
+// Returns request target for a given model, preferring the direct Google API.
+function aiTarget(model: string, lovableKey: string) {
+  if (GEMINI_API_KEY) {
+    return {
+      url: GEMINI_OPENAI_URL,
+      key: GEMINI_API_KEY,
+      model: toGoogleModel(model),
+      direct: true,
+    };
+  }
+  return { url: LOVABLE_GATEWAY_URL, key: lovableKey, model, direct: false };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function callAiChat(
@@ -370,13 +402,14 @@ async function callAiChat(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        const target = aiTarget(model, lovableKey);
+        const res = await fetch(target.url, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${lovableKey}`,
+            'Authorization': `Bearer ${target.key}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ ...payload, model }),
+          body: JSON.stringify({ ...payload, model: target.model }),
           signal: controller.signal,
         });
         clearTimeout(timer);
@@ -388,7 +421,7 @@ async function callAiChat(
           console.error(`[${label}] empty AI content (${model}), retrying`);
         } else {
           const body = await res.text();
-          if (res.status === 402) {
+          if (res.status === 402 && !target.direct) {
             AI_CREDITS_EXHAUSTED = true;
             console.error(`[${label}] AI credits exhausted (402). Aborting AI usage for this run.`);
             return null;
@@ -510,14 +543,15 @@ async function generateAndUploadImage(
   supabase: ReturnType<typeof createClient>
 ): Promise<string | null> {
   try {
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const target = aiTarget('google/gemini-2.5-flash-image', lovableKey);
+    const res = await fetch(target.url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${lovableKey}`,
+        'Authorization': `Bearer ${target.key}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-image',
+        model: target.model,
         messages: [
           {
             role: 'user',
@@ -771,12 +805,13 @@ async function validateImageWithVision(
   try {
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), 12000);
-    const r = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const visionTarget = aiTarget('google/gemini-2.5-flash', lovableKey);
+    const r = await fetch(visionTarget.url, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${lovableKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${visionTarget.key}`, 'Content-Type': 'application/json' },
       signal: c.signal,
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: visionTarget.model,
         messages: [{
           role: 'user',
           content: [
@@ -1522,7 +1557,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-    const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableKey = Deno.env.get('LOVABLE_API_KEY') || '';
 
     if (!firecrawlKey) {
       return new Response(
@@ -1531,9 +1566,9 @@ serve(async (req) => {
       );
     }
 
-    if (!lovableKey) {
+    if (!lovableKey && !GEMINI_API_KEY) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Lovable API key not configured' }),
+        JSON.stringify({ success: false, error: 'No AI key configured (GEMINI_API_KEY or LOVABLE_API_KEY)' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
