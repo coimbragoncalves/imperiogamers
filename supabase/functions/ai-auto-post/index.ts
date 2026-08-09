@@ -535,77 +535,6 @@ async function searchImagesFor(
   }
 }
 
-// Generate an AI image as final fallback, upload to the 'uploads' bucket,
-// and return the public URL. Returns null on failure.
-async function generateAndUploadImage(
-  prompt: string,
-  lovableKey: string,
-  supabase: ReturnType<typeof createClient>
-): Promise<string | null> {
-  try {
-    const target = aiTarget('google/gemini-2.5-flash-image', lovableKey);
-    const res = await fetch(target.url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${target.key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: target.model,
-        messages: [
-          {
-            role: 'user',
-            content: `Cinematic, high quality 16:9 promotional artwork. ${prompt}. Photorealistic gaming key art style. No text, no watermarks.`,
-          },
-        ],
-        modalities: ['image', 'text'],
-      }),
-    });
-    if (!res.ok) {
-      console.error('AI image generation failed:', res.status);
-      return null;
-    }
-    const data = await res.json();
-    // Extract data URL from the response
-    const msg = data.choices?.[0]?.message;
-    let dataUrl: string | null = null;
-    if (typeof msg?.content === 'string' && msg.content.startsWith('data:image/')) {
-      dataUrl = msg.content;
-    } else if (Array.isArray(msg?.content)) {
-      for (const part of msg.content) {
-        if (part?.type === 'image_url' && part?.image_url?.url?.startsWith('data:image/')) {
-          dataUrl = part.image_url.url;
-          break;
-        }
-      }
-    } else if (msg?.images?.[0]?.image_url?.url?.startsWith('data:image/')) {
-      dataUrl = msg.images[0].image_url.url;
-    }
-    if (!dataUrl) return null;
-
-    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
-    if (!match) return null;
-    const mime = match[1];
-    const ext = mime.split('/')[1] || 'png';
-    const b64 = match[2];
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const path = `ai-generated/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
-    const { error: uploadErr } = await supabase.storage.from('uploads').upload(path, bytes, {
-      contentType: mime,
-      upsert: false,
-    });
-    if (uploadErr) {
-      console.error('Upload AI image error:', uploadErr);
-      return null;
-    }
-    const { data: pub } = supabase.storage.from('uploads').getPublicUrl(path);
-    return pub.publicUrl;
-  } catch (err) {
-    console.error('generateAndUploadImage error:', err);
-    return null;
-  }
-}
-
 // Orchestrator: ensure item has enough relevant images.
 async function enrichImagePool(
   item: NewsItem,
@@ -960,16 +889,13 @@ async function runImagePipeline(
   }
   if (!cover) cover = scored[0] || null;
 
-  // 4) AI fallback for cover if everything failed
+  // 4) NO AI image generation: only real images. If none found, leave pool empty
+  //    so the item is skipped downstream.
   if (!cover) {
-    const aiUrl = await generateAndUploadImage(
-      `Promotional artwork for the video game "${item.entity?.gameTitle || item.title}". Dramatic lighting, epic composition, cinematic.`,
-      lovableKey,
-      supabase,
-    );
-    if (aiUrl) {
-      cover = { url: aiUrl, category: 'promo', score: 60, source: 'ai', validated: true };
-    }
+    console.log(`No real image found for "${item.title}" - item will be skipped (AI image generation disabled)`);
+    item.imageMeta = [];
+    item.imageUrls = [];
+    return;
   }
 
   // 5) Download cover + top N internal images to our bucket
