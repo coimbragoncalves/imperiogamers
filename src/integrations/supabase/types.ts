@@ -94,6 +94,7 @@ export type Database = {
           id: string
           is_enabled: boolean
           last_run_at: string | null
+          posts_per_type_map: Json
           schedule_times: Json
           source_sites: Json
           updated_at: string
@@ -107,6 +108,7 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_run_at?: string | null
+          posts_per_type_map?: Json
           schedule_times?: Json
           source_sites?: Json
           updated_at?: string
@@ -120,6 +122,7 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_run_at?: string | null
+          posts_per_type_map?: Json
           schedule_times?: Json
           source_sites?: Json
           updated_at?: string
