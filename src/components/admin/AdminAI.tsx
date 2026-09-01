@@ -62,6 +62,22 @@ interface ContentTypes {
   curiogame: boolean;
 }
 
+type ContentTypeKey = keyof ContentTypes;
+
+const TYPE_META: { key: ContentTypeKey; label: string; icon: string }[] = [
+  { key: 'news', label: 'Notícias', icon: '📰' },
+  { key: 'review', label: 'Reviews', icon: '⭐' },
+  { key: 'trailer', label: 'Trailers', icon: '🎬' },
+  { key: 'curiogame', label: 'CurioGame', icon: '🎮' },
+];
+
+const DEFAULT_COUNTS: Record<ContentTypeKey, number> = {
+  news: 3,
+  review: 3,
+  trailer: 3,
+  curiogame: 2,
+};
+
 const AdminAI = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -69,13 +85,14 @@ const AdminAI = () => {
   const [newChannel, setNewChannel] = useState('');
   const [newTime, setNewTime] = useState('');
   const [isRunning, setIsRunning] = useState(false);
-  const [postsPerType, setPostsPerType] = useState(3);
+  const [perTypeCounts, setPerTypeCounts] = useState<Record<ContentTypeKey, number>>(DEFAULT_COUNTS);
   const [contentTypes, setContentTypes] = useState<ContentTypes>({
     news: true,
     review: true,
     trailer: true,
     curiogame: false,
   });
+
 
   const { data: settings, isLoading: loadingSettings } = useQuery({
     queryKey: ['ai-settings'],
