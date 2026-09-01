@@ -156,6 +156,32 @@ const AdminAI = () => {
     }
   }, [settings?.content_types]);
 
+  // Hydrate per-type quantities
+  useEffect(() => {
+    const saved = settings?.posts_per_type_map;
+    if (saved && typeof saved === 'object') {
+      setPerTypeCounts({
+        news: Number(saved.news) || DEFAULT_COUNTS.news,
+        review: Number(saved.review) || DEFAULT_COUNTS.review,
+        trailer: Number(saved.trailer) || DEFAULT_COUNTS.trailer,
+        curiogame: Number(saved.curiogame) || DEFAULT_COUNTS.curiogame,
+      });
+    }
+  }, [settings?.posts_per_type_map]);
+
+  const setTypeCount = (type: ContentTypeKey, value: number) => {
+    const next = { ...perTypeCounts, [type]: value };
+    setPerTypeCounts(next);
+    if (settings?.id) updateSettings.mutate({ posts_per_type_map: next });
+  };
+
+  const totalPerRun = TYPE_META.reduce(
+    (sum, { key }) => sum + (contentTypes[key] ? perTypeCounts[key] : 0),
+    0,
+  );
+
+
+
   const toggleAI = () => {
     updateSettings.mutate({ is_enabled: !settings?.is_enabled });
   };
