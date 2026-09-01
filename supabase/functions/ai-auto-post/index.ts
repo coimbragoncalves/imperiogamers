@@ -1453,7 +1453,9 @@ serve(async (req) => {
   try {
     // Verifica parâmetros da execução
     let forceNew = false;
-    let postsPerType = 3; // Default: 3 posts per type
+    let postsPerType = 3; // Default: 3 posts per type (fallback)
+    const postsPerTypeMap: Record<string, number> = { news: 3, review: 3, trailer: 3, curiogame: 2 };
+    let explicitCounts = false;
     let contentTypes: string[] = ['news', 'review', 'trailer']; // Default: all types
     let manualRun = false;
     let explicitTypes = false;
@@ -1463,6 +1465,13 @@ serve(async (req) => {
       manualRun = body?.manual === true || forceNew;
       if (body?.postsPerType && typeof body.postsPerType === 'number') {
         postsPerType = Math.min(Math.max(body.postsPerType, 1), 10); // Limita entre 1 e 10
+      }
+      if (body?.postsPerTypeMap && typeof body.postsPerTypeMap === 'object') {
+        for (const t of ['news', 'review', 'trailer', 'curiogame']) {
+          const v = Number((body.postsPerTypeMap as Record<string, unknown>)[t]);
+          if (Number.isFinite(v) && v > 0) postsPerTypeMap[t] = Math.min(Math.max(Math.round(v), 1), 10);
+        }
+        explicitCounts = true;
       }
       if (body?.contentTypes && Array.isArray(body.contentTypes) && body.contentTypes.length > 0) {
         contentTypes = body.contentTypes.filter((t: string) => ['news', 'review', 'trailer', 'curiogame'].includes(t));
@@ -1570,6 +1579,19 @@ serve(async (req) => {
       contentTypes = saved.length > 0 ? saved : ['news', 'review', 'trailer', 'curiogame'];
       console.log('Content types from settings:', contentTypes);
     }
+
+    // Per-type quantities: automatic runs follow the admin panel configuration
+    if (!explicitCounts) {
+      const savedMap = (settings as Record<string, unknown>).posts_per_type_map;
+      if (savedMap && typeof savedMap === 'object') {
+        for (const t of ['news', 'review', 'trailer', 'curiogame']) {
+          const v = Number((savedMap as Record<string, unknown>)[t]);
+          if (Number.isFinite(v) && v > 0) postsPerTypeMap[t] = Math.min(Math.max(Math.round(v), 1), 10);
+        }
+      }
+    }
+    const targetFor = (t: string): number => postsPerTypeMap[t] ?? postsPerType;
+    console.log('Posts per type map:', JSON.stringify(postsPerTypeMap));
 
     const sourceSites = settings.source_sites as string[];
     const youtubeChannels = settings.youtube_channels as string[];
@@ -1743,7 +1765,7 @@ serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(30);
       const recentTitles = (recentCurio || []).map((r: { title: string }) => r.title);
-      for (let i = 0; i < postsPerType * 3; i++) {
+      for (let i = 0; i < targetFor('curiogame') * 3; i++) {
         if (AI_CREDITS_EXHAUSTED) break;
         const topic = await generateCurioGameTopic(lovableKey, recentTitles);
         if (topic) {
@@ -1823,12 +1845,12 @@ serve(async (req) => {
     const activeTypes = contentTypes.filter((t: string) => (queues[t] || []).length > 0);
     const createdByType: Record<string, number> = {};
     const attemptsByType: Record<string, number> = {};
-    const maxAttemptsPerType = Math.max(postsPerType * 4, postsPerType + 6);
+    const maxAttemptsFor = (t: string) => Math.max(targetFor(t) * 4, targetFor(t) + 6);
 
     const nextItem = (): NewsItem | null => {
       for (const t of activeTypes) {
-        if ((createdByType[t] || 0) >= postsPerType) continue;
-        if ((attemptsByType[t] || 0) >= maxAttemptsPerType) continue;
+        if ((createdByType[t] || 0) >= targetFor(t)) continue;
+        if ((attemptsByType[t] || 0) >= maxAttemptsFor(t)) continue;
         const queue = queues[t];
         if (queue && queue.length > 0) {
           attemptsByType[t] = (attemptsByType[t] || 0) + 1;
@@ -1839,7 +1861,7 @@ serve(async (req) => {
     };
 
     console.log(
-      `Target ${postsPerType} per type. Reserve pool: ${queues.news.length} news, ${queues.review.length} reviews, ${queues.trailer.length} trailers, ${queues.curiogame.length} curiogame`
+      `Targets: ${activeTypes.map((t: string) => `${t}=${targetFor(t)}`).join(', ')}. Reserve pool: ${queues.news.length} news, ${queues.review.length} reviews, ${queues.trailer.length} trailers, ${queues.curiogame.length} curiogame`
     );
 
     const duplicateCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
@@ -2162,10 +2184,10 @@ serve(async (req) => {
 
     const shortfall = activeTypes
       .map((t: string) => ({ type: t, created: createdByType[t] || 0 }))
-      .filter((r) => r.created < postsPerType);
+      .filter((r) => r.created < targetFor(r.type));
     if (shortfall.length > 0) {
       console.log(
-        `Run finished below target for: ${shortfall.map((s) => `${s.type} ${s.created}/${postsPerType}`).join(', ')}` +
+        `Run finished below target for: ${shortfall.map((s) => `${s.type} ${s.created}/${targetFor(s.type)}`).join(', ')}` +
           (AI_CREDITS_EXHAUSTED ? ' — motivo: créditos de IA esgotados' : ' — reserva de candidatos esgotada')
       );
     }
@@ -2200,7 +2222,7 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         queued: true,
-        message: `Geração iniciada em segundo plano (${contentTypes.join(', ')} · ${postsPerType} por tipo). Acompanhe no histórico.`,
+        message: `Geração iniciada em segundo plano (${contentTypes.map((t) => `${t}: ${postsPerTypeMap[t] ?? postsPerType}`).join(', ')}). Acompanhe no histórico.`,
       }),
       { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

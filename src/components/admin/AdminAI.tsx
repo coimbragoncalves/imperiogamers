@@ -39,6 +39,8 @@ interface AISettings {
   schedule_times: string[];
   last_run_at: string | null;
   content_types: string[];
+  posts_per_type_map: Record<string, number>;
+
   facebook_crosspost_enabled: boolean;
   facebook_post_mode: 'card' | 'full';
   updated_at: string;
@@ -62,6 +64,22 @@ interface ContentTypes {
   curiogame: boolean;
 }
 
+type ContentTypeKey = keyof ContentTypes;
+
+const TYPE_META: { key: ContentTypeKey; label: string; icon: string }[] = [
+  { key: 'news', label: 'Notícias', icon: '📰' },
+  { key: 'review', label: 'Reviews', icon: '⭐' },
+  { key: 'trailer', label: 'Trailers', icon: '🎬' },
+  { key: 'curiogame', label: 'CurioGame', icon: '🎮' },
+];
+
+const DEFAULT_COUNTS: Record<ContentTypeKey, number> = {
+  news: 3,
+  review: 3,
+  trailer: 3,
+  curiogame: 2,
+};
+
 const AdminAI = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -69,13 +87,14 @@ const AdminAI = () => {
   const [newChannel, setNewChannel] = useState('');
   const [newTime, setNewTime] = useState('');
   const [isRunning, setIsRunning] = useState(false);
-  const [postsPerType, setPostsPerType] = useState(3);
+  const [perTypeCounts, setPerTypeCounts] = useState<Record<ContentTypeKey, number>>(DEFAULT_COUNTS);
   const [contentTypes, setContentTypes] = useState<ContentTypes>({
     news: true,
     review: true,
     trailer: true,
     curiogame: false,
   });
+
 
   const { data: settings, isLoading: loadingSettings } = useQuery({
     queryKey: ['ai-settings'],
@@ -136,6 +155,32 @@ const AdminAI = () => {
       });
     }
   }, [settings?.content_types]);
+
+  // Hydrate per-type quantities
+  useEffect(() => {
+    const saved = settings?.posts_per_type_map;
+    if (saved && typeof saved === 'object') {
+      setPerTypeCounts({
+        news: Number(saved.news) || DEFAULT_COUNTS.news,
+        review: Number(saved.review) || DEFAULT_COUNTS.review,
+        trailer: Number(saved.trailer) || DEFAULT_COUNTS.trailer,
+        curiogame: Number(saved.curiogame) || DEFAULT_COUNTS.curiogame,
+      });
+    }
+  }, [settings?.posts_per_type_map]);
+
+  const setTypeCount = (type: ContentTypeKey, value: number) => {
+    const next = { ...perTypeCounts, [type]: value };
+    setPerTypeCounts(next);
+    if (settings?.id) updateSettings.mutate({ posts_per_type_map: next });
+  };
+
+  const totalPerRun = TYPE_META.reduce(
+    (sum, { key }) => sum + (contentTypes[key] ? perTypeCounts[key] : 0),
+    0,
+  );
+
+
 
   const toggleAI = () => {
     updateSettings.mutate({ is_enabled: !settings?.is_enabled });
@@ -207,7 +252,14 @@ const AdminAI = () => {
     setIsRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('ai-auto-post', {
-        body: { postsPerType, contentTypes: selectedTypes, manual: true, forceNew: true }
+        body: {
+          postsPerTypeMap: perTypeCounts,
+          postsPerType: Math.max(...selectedTypes.map((t) => perTypeCounts[t as ContentTypeKey] || 1)),
+          contentTypes: selectedTypes,
+          manual: true,
+          forceNew: true,
+        }
+
       });
       
       if (error) throw error;
@@ -341,45 +393,47 @@ const AdminAI = () => {
           </div>
         </Card>
 
-        {/* Quantidade de Posts por Execução */}
+        {/* Quantidade de Posts por Tipo */}
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-4">
             <Hash className="h-5 w-5 text-primary" />
             <h2 className="text-lg font-semibold">Quantidade por Tipo</h2>
           </div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm text-muted-foreground">
-                Posts por tipo selecionado
-              </Label>
-              <Badge variant="secondary" className="text-lg font-bold px-4 py-1">
-                {postsPerType}
-              </Badge>
-            </div>
-            
-            <Slider
-              value={[postsPerType]}
-              onValueChange={(value) => setPostsPerType(value[0])}
-              min={1}
-              max={10}
-              step={1}
-              className="w-full"
-            />
-            
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>1</span>
-              <span>5</span>
-              <span>10</span>
-            </div>
-            
-            <p className="text-sm text-muted-foreground">
-              Total por execução: até <strong>
-                {postsPerType * Object.values(contentTypes).filter(Boolean).length} posts
-              </strong>
+
+          <p className="text-sm text-muted-foreground mb-4">
+            Defina quantos posts a IA deve gerar de cada tipo por execução
+          </p>
+
+          <div className="space-y-5">
+            {TYPE_META.map(({ key, label, icon }) => (
+              <div key={key} className={`space-y-2 ${contentTypes[key] ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-sm">
+                    <span>{icon}</span>
+                    {label}
+                  </Label>
+                  <Badge variant="secondary" className="font-bold px-3">
+                    {perTypeCounts[key]}
+                  </Badge>
+                </div>
+                <Slider
+                  value={[perTypeCounts[key]]}
+                  onValueChange={(value) => setTypeCount(key, value[0])}
+                  min={1}
+                  max={10}
+                  step={1}
+                  disabled={!contentTypes[key]}
+                  className="w-full"
+                />
+              </div>
+            ))}
+
+            <p className="text-sm text-muted-foreground pt-1 border-t">
+              Total por execução: até <strong>{totalPerRun} posts</strong>
             </p>
           </div>
         </Card>
+
       </div>
 
       {/* Status Card */}
