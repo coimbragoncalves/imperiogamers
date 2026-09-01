@@ -341,45 +341,47 @@ const AdminAI = () => {
           </div>
         </Card>
 
-        {/* Quantidade de Posts por Execução */}
+        {/* Quantidade de Posts por Tipo */}
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-4">
             <Hash className="h-5 w-5 text-primary" />
             <h2 className="text-lg font-semibold">Quantidade por Tipo</h2>
           </div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm text-muted-foreground">
-                Posts por tipo selecionado
-              </Label>
-              <Badge variant="secondary" className="text-lg font-bold px-4 py-1">
-                {postsPerType}
-              </Badge>
-            </div>
-            
-            <Slider
-              value={[postsPerType]}
-              onValueChange={(value) => setPostsPerType(value[0])}
-              min={1}
-              max={10}
-              step={1}
-              className="w-full"
-            />
-            
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>1</span>
-              <span>5</span>
-              <span>10</span>
-            </div>
-            
-            <p className="text-sm text-muted-foreground">
-              Total por execução: até <strong>
-                {postsPerType * Object.values(contentTypes).filter(Boolean).length} posts
-              </strong>
+
+          <p className="text-sm text-muted-foreground mb-4">
+            Defina quantos posts a IA deve gerar de cada tipo por execução
+          </p>
+
+          <div className="space-y-5">
+            {TYPE_META.map(({ key, label, icon }) => (
+              <div key={key} className={`space-y-2 ${contentTypes[key] ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-sm">
+                    <span>{icon}</span>
+                    {label}
+                  </Label>
+                  <Badge variant="secondary" className="font-bold px-3">
+                    {perTypeCounts[key]}
+                  </Badge>
+                </div>
+                <Slider
+                  value={[perTypeCounts[key]]}
+                  onValueChange={(value) => setTypeCount(key, value[0])}
+                  min={1}
+                  max={10}
+                  step={1}
+                  disabled={!contentTypes[key]}
+                  className="w-full"
+                />
+              </div>
+            ))}
+
+            <p className="text-sm text-muted-foreground pt-1 border-t">
+              Total por execução: até <strong>{totalPerRun} posts</strong>
             </p>
           </div>
         </Card>
+
       </div>
 
       {/* Status Card */}
