@@ -252,7 +252,14 @@ const AdminAI = () => {
     setIsRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('ai-auto-post', {
-        body: { postsPerType, contentTypes: selectedTypes, manual: true, forceNew: true }
+        body: {
+          postsPerTypeMap: perTypeCounts,
+          postsPerType: Math.max(...selectedTypes.map((t) => perTypeCounts[t as ContentTypeKey] || 1)),
+          contentTypes: selectedTypes,
+          manual: true,
+          forceNew: true,
+        }
+
       });
       
       if (error) throw error;
