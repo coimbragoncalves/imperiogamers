@@ -398,6 +398,25 @@ function aiTarget(model: string, lovableKey: string): AiTarget {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Serialize AI requests with a minimum gap so we never trip provider
+// rate limits by firing many completions in parallel.
+let aiQueue: Promise<unknown> = Promise.resolve();
+let lastAiCallAt = 0;
+const AI_MIN_GAP_MS = 1200;
+function queueAi<T>(fn: () => Promise<T>): Promise<T> {
+  const run = aiQueue.then(async () => {
+    const wait = AI_MIN_GAP_MS - (Date.now() - lastAiCallAt);
+    if (wait > 0) await sleep(wait);
+    try {
+      return await fn();
+    } finally {
+      lastAiCallAt = Date.now();
+    }
+  });
+  aiQueue = run.catch(() => undefined);
+  return run as Promise<T>;
+}
+
 async function callAiChat(
   lovableKey: string,
   payload: Record<string, unknown>,
@@ -419,7 +438,7 @@ async function callAiChat(
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const res = await fetch(target.url, {
+          const res = await queueAi(() => fetch(target.url, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${target.key}`,
@@ -427,8 +446,9 @@ async function callAiChat(
             },
             body: JSON.stringify({ ...payload, model: target.model }),
             signal: controller.signal,
-          });
+          }));
           clearTimeout(timer);
+
 
           if (res.ok) {
             const data = await res.json();
