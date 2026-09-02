@@ -61,43 +61,14 @@ export async function publishArticleToFacebook(post: {
   const path = post.contentType === 'trailer' ? 'trailer' : 'artigo';
   const link = `${SITE_URL}/${path}/${post.slug}`;
   const tags = `${TAGS[post.contentType] || '#games'} #ImperioGamers`;
+  const cta = '👉 Clica no card para terminar de ler';
 
-  // Rule: trailers go as a link card only (no link in the caption).
-  // News, reviews and curiogame go with the full text plus every photo.
-  const mode: 'card' | 'full' = post.contentType === 'trailer' ? 'card' : 'full';
-
-  let message = [post.title, post.description || '', tags].filter(Boolean).join('\n\n');
-  let images: string[] = [];
-
-  if (mode === 'full') {
-    const { data: article } = await supabase
-      .from('articles')
-      .select('id, content, cover_image')
-      .eq('slug', post.slug)
-      .maybeSingle();
-
-    const html = article?.content ? String(article.content) : '';
-    const bodyText = htmlToText(html);
-    message = [post.title, post.description || '', bodyText, tags].filter(Boolean).join('\n\n').slice(0, 60000);
-
-    const extra: string[] = [];
-    if (article?.id) {
-      const { data: gallery } = await supabase
-        .from('article_images')
-        .select('image_url, position')
-        .eq('article_id', article.id)
-        .order('position', { ascending: true });
-      for (const g of gallery || []) if (g.image_url) extra.push(g.image_url);
-    }
-    images = [article?.cover_image, ...extractImages(html), ...extra]
-      .filter((u): u is string => Boolean(u) && String(u).startsWith('http'))
-      .filter((u, i, arr) => arr.indexOf(u) === i)
-      .slice(0, 10);
-  }
+  // Every post goes as a link card: cover image + summary, clickable to the site.
+  const message = [post.title, post.description || '', cta, tags].filter(Boolean).join('\n\n');
 
   try {
     const { data, error } = await supabase.functions.invoke('publish-facebook', {
-      body: { message, link: mode === 'card' ? link : undefined, title: post.title, mode, images },
+      body: { message, link, title: post.title, mode: 'card', images: [] },
     });
     if (error) return { ok: false, error: (data as { error?: string } | null)?.error || error.message };
     if ((data as { error?: string })?.error) return { ok: false, error: (data as { error: string }).error };
