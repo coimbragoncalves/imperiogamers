@@ -345,7 +345,7 @@ async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean>
 const AI_MODEL_CHAIN = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
-  'google/gemini-2.5-flash-lite',
+  'google/gemini-3-flash-lite-preview',
 ];
 
 let AI_CREDITS_EXHAUSTED = false;
@@ -369,10 +369,12 @@ function toGoogleModel(model: string) {
     'gemini-3-flash-preview': 'gemini-flash-latest',
     'gemini-2.5-flash': 'gemini-flash-latest',
     'gemini-2.5-flash-lite': 'gemini-flash-lite-latest',
+    'gemini-3-flash-lite-preview': 'gemini-flash-lite-latest',
     'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
   };
   return map[bare] || bare;
 }
+
 
 type AiTarget = { url: string; key: string; model: string; direct: boolean };
 
