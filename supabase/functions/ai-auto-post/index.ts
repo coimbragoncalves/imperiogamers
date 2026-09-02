@@ -345,15 +345,18 @@ async function validateImageUrl(url: string, timeoutMs = 5000): Promise<boolean>
 const AI_MODEL_CHAIN = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
-  'google/gemini-2.5-flash-lite',
+  'google/gemini-3-flash-lite-preview',
 ];
 
 let AI_CREDITS_EXHAUSTED = false;
+// When the project's own Google key runs out of free quota (429) we stop
+// hammering it and route the rest of the run through the Lovable gateway.
+let GOOGLE_QUOTA_EXHAUSTED = false;
 
 // ============================================================
 // Provider routing: prefer the project's own Google Gemini key
 // (no Lovable credits consumed). Falls back to the Lovable AI
-// Gateway when GEMINI_API_KEY is not configured.
+// Gateway when GEMINI_API_KEY is missing/quota-limited.
 // ============================================================
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 const GEMINI_OPENAI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
@@ -363,34 +366,62 @@ const LOVABLE_GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 function toGoogleModel(model: string) {
   const bare = model.replace(/^google\//, '');
   const map: Record<string, string> = {
-    'gemini-3-flash-preview': 'gemini-2.5-flash',
+    'gemini-3-flash-preview': 'gemini-flash-latest',
+    'gemini-2.5-flash': 'gemini-flash-latest',
+    'gemini-2.5-flash-lite': 'gemini-flash-lite-latest',
+    'gemini-3-flash-lite-preview': 'gemini-flash-lite-latest',
     'gemini-2.5-flash-image': 'gemini-2.5-flash-image',
   };
   return map[bare] || bare;
 }
 
-// Returns request target for a given model, preferring the direct Google API.
-function aiTarget(model: string, lovableKey: string) {
-  if (GEMINI_API_KEY) {
-    return {
-      url: GEMINI_OPENAI_URL,
-      key: GEMINI_API_KEY,
-      model: toGoogleModel(model),
-      direct: true,
-    };
+
+type AiTarget = { url: string; key: string; model: string; direct: boolean };
+
+// Providers to try for a given model, in priority order.
+function aiTargets(model: string, lovableKey: string): AiTarget[] {
+  const targets: AiTarget[] = [];
+  if (GEMINI_API_KEY && !GOOGLE_QUOTA_EXHAUSTED) {
+    targets.push({ url: GEMINI_OPENAI_URL, key: GEMINI_API_KEY, model: toGoogleModel(model), direct: true });
   }
-  return { url: LOVABLE_GATEWAY_URL, key: lovableKey, model, direct: false };
+  if (lovableKey && !AI_CREDITS_EXHAUSTED) {
+    targets.push({ url: LOVABLE_GATEWAY_URL, key: lovableKey, model, direct: false });
+  }
+  return targets;
+}
+
+// Kept for callers that only need a single (primary) target.
+function aiTarget(model: string, lovableKey: string): AiTarget {
+  const list = aiTargets(model, lovableKey);
+  return list[0] || { url: LOVABLE_GATEWAY_URL, key: lovableKey, model, direct: false };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Serialize AI requests with a minimum gap so we never trip provider
+// rate limits by firing many completions in parallel.
+let aiQueue: Promise<unknown> = Promise.resolve();
+let lastAiCallAt = 0;
+const AI_MIN_GAP_MS = 1200;
+function queueAi<T>(fn: () => Promise<T>): Promise<T> {
+  const run = aiQueue.then(async () => {
+    const wait = AI_MIN_GAP_MS - (Date.now() - lastAiCallAt);
+    if (wait > 0) await sleep(wait);
+    try {
+      return await fn();
+    } finally {
+      lastAiCallAt = Date.now();
+    }
+  });
+  aiQueue = run.catch(() => undefined);
+  return run as Promise<T>;
+}
 
 async function callAiChat(
   lovableKey: string,
   payload: Record<string, unknown>,
   opts: { attemptsPerModel?: number; timeoutMs?: number; label?: string } = {}
 ): Promise<string | null> {
-  if (AI_CREDITS_EXHAUSTED) return null;
-
   const attempts = opts.attemptsPerModel ?? 3;
   const timeoutMs = opts.timeoutMs ?? 90000;
   const label = opts.label ?? 'ai';
@@ -398,48 +429,66 @@ async function callAiChat(
   const models = [requestedModel, ...AI_MODEL_CHAIN.filter((m) => m !== requestedModel)];
 
   for (const model of models) {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const target = aiTarget(model, lovableKey);
-        const res = await fetch(target.url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${target.key}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ ...payload, model: target.model }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
+    const targets = aiTargets(model, lovableKey);
+    if (targets.length === 0) return null;
 
-        if (res.ok) {
-          const data = await res.json();
-          const content = data?.choices?.[0]?.message?.content;
-          if (content) return content as string;
-          console.error(`[${label}] empty AI content (${model}), retrying`);
-        } else {
-          const body = await res.text();
-          if (res.status === 402 && !target.direct) {
-            AI_CREDITS_EXHAUSTED = true;
-            console.error(`[${label}] AI credits exhausted (402). Aborting AI usage for this run.`);
-            return null;
+    for (const target of targets) {
+      let quotaFailures = 0;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await queueAi(() => fetch(target.url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${target.key}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ ...payload, model: target.model }),
+            signal: controller.signal,
+          }));
+          clearTimeout(timer);
+
+
+          if (res.ok) {
+            const data = await res.json();
+            const content = data?.choices?.[0]?.message?.content;
+            if (content) return content as string;
+            console.error(`[${label}] empty AI content (${target.model}), retrying`);
+          } else {
+            const body = await res.text();
+            if ((res.status === 402 || res.status === 403) && !target.direct) {
+              AI_CREDITS_EXHAUSTED = true;
+              console.error(`[${label}] Lovable AI unavailable (${res.status}). ${body.slice(0, 200)}`);
+              break; // try next provider/model
+            }
+            if (res.status === 429) {
+              quotaFailures++;
+              if (target.direct && quotaFailures >= 2) {
+                GOOGLE_QUOTA_EXHAUSTED = true;
+                console.error(`[${label}] Google free quota exhausted — switching to Lovable AI gateway.`);
+                break; // fall through to next provider
+              }
+              const wait = Math.min(15000, 1500 * Math.pow(2, attempt - 1));
+              console.error(`[${label}] AI 429 on ${target.model} (attempt ${attempt}/${attempts}) — waiting ${wait}ms`);
+              await sleep(wait);
+              continue;
+            }
+            if (res.status >= 500) {
+              const wait = Math.min(15000, 1500 * Math.pow(2, attempt - 1));
+              console.error(`[${label}] AI ${res.status} on ${target.model} (attempt ${attempt}/${attempts}) — waiting ${wait}ms`);
+              await sleep(wait);
+              continue;
+            }
+            console.error(`[${label}] AI ${res.status} on ${target.model}: ${body.slice(0, 300)}`);
+            break; // non-retryable for this provider — try next
           }
-          if (res.status === 429 || res.status >= 500) {
-            const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
-            console.error(`[${label}] AI ${res.status} on ${model} (attempt ${attempt}/${attempts}) — waiting ${wait}ms`);
-            await sleep(wait);
-            continue;
-          }
-          console.error(`[${label}] AI ${res.status} on ${model}: ${body.slice(0, 300)}`);
-          break; // non-retryable for this model — try next model
+        } catch (err) {
+          clearTimeout(timer);
+          const wait = Math.min(15000, 1500 * Math.pow(2, attempt - 1));
+          console.error(`[${label}] AI network error on ${target.model} (attempt ${attempt}/${attempts}):`, err instanceof Error ? err.message : err);
+          await sleep(wait);
         }
-      } catch (err) {
-        clearTimeout(timer);
-        const wait = Math.min(20000, 1500 * Math.pow(2, attempt - 1));
-        console.error(`[${label}] AI network error on ${model} (attempt ${attempt}/${attempts}):`, err instanceof Error ? err.message : err);
-        await sleep(wait);
       }
     }
     console.error(`[${label}] falling back from ${model}`);
@@ -447,6 +496,7 @@ async function callAiChat(
 
   return null;
 }
+
 
 // Use Gemini to extract the main entity (game / franchise / characters)
 // from the article so we can search images that truly match the topic.
