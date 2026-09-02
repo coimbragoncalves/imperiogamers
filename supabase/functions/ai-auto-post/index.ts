@@ -1406,18 +1406,12 @@ async function crossPostToFacebook(post: {
     curiogame: '#curiogame #curiosidades #games',
   };
   const tagLine = `${tags[post.contentType] || '#games'} #ImperioGamers`;
-  // Rule: trailers go as a link card only (no link in the caption — the card is clickable).
-  // News, reviews and curiogame always go with the full text plus every photo.
-  const mode: 'card' | 'full' = post.contentType === 'trailer' ? 'card' : 'full';
-  const images = (post.images || []).filter((u) => typeof u === 'string' && u.startsWith('http')).slice(0, 10);
+  // Rule: every content type goes as a link card (cover image + summary).
+  // The card itself is clickable and takes the reader to the site.
+  const mode: 'card' = 'card';
+  const cta = '👉 Clica no card para terminar de ler';
 
-  const message =
-    mode === 'full'
-      ? [post.title, post.description, htmlToPlainText(post.content || ''), tagLine]
-          .filter(Boolean)
-          .join('\n\n')
-          .slice(0, 60000)
-      : `${post.title}\n\n${post.description}\n\n${tagLine}`;
+  const message = [post.title, post.description, cta, tagLine].filter(Boolean).join('\n\n');
 
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/publish-facebook`, {
@@ -1428,12 +1422,13 @@ async function crossPostToFacebook(post: {
       },
       body: JSON.stringify({
         message,
-        link: mode === 'card' ? link : undefined,
+        link,
         title: post.title,
         mode,
-        images: mode === 'full' ? images : [],
+        images: [],
       }),
     });
+
     const data = await res.json();
     if (!res.ok) {
       console.error('Facebook cross-post failed:', JSON.stringify(data));
