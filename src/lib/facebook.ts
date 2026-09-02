@@ -30,27 +30,6 @@ export async function callFacebookOAuth<T>(payload: Record<string, unknown>): Pr
   return data as T;
 }
 
-function htmlToText(html: string): string {
-  const doc = new DOMParser().parseFromString(
-    html.replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '</$1>\n\n').replace(/<br\s*\/?>/gi, '\n'),
-    'text/html',
-  );
-  return (doc.body.textContent || '')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim();
-}
-
-function extractImages(html: string): string[] {
-  const urls: string[] = [];
-  const re = /<img[^>]+src=["']([^"']+)["']/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
-    if (m[1].startsWith('http')) urls.push(m[1]);
-  }
-  return urls;
-}
-
 /** Publishes an article on the connected Facebook Page. Never throws. */
 export async function publishArticleToFacebook(post: {
   title: string;
