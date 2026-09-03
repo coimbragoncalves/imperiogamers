@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.ai-auto-post]
 verify_jwt = false
+
+[functions.weekly-plan-post]
+verify_jwt = false
