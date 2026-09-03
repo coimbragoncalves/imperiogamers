@@ -8,8 +8,7 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession:
 
 // Fixed daily slots (Luanda time, UTC+1 without DST)
 const SLOTS = ['09:30', '15:10', '19:20'];
-const WINDOW_MINUTES = 12;
-const LAST_RUN_KEY = 'weekly_plan_last_run';
+const WINDOW_MINUTES = 20;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -130,29 +129,11 @@ Deno.serve(async (req) => {
     return json(result, result.ok ? 200 : 400);
   }
 
+  // Scheduled invocation: three exact daily jobs (09:30, 15:10, 19:20 Luanda).
   const slot = dueSlot();
-  if (!slot) return json({ success: true, skipped: 'not_scheduled' });
-
-  // Avoid publishing twice inside the same slot window
-  const { data: lastRun } = await admin
-    .from('site_settings')
-    .select('id, value')
-    .eq('key', LAST_RUN_KEY)
-    .maybeSingle();
-
-  if (lastRun?.value) {
-    const since = Date.now() - new Date(lastRun.value).getTime();
-    if (since < 60 * 60 * 1000) return json({ success: true, skipped: 'already_ran' });
-  }
-
-  const stamp = new Date().toISOString();
-  if (lastRun?.id) {
-    await admin.from('site_settings').update({ value: stamp, updated_at: stamp }).eq('id', lastRun.id);
-  } else {
-    await admin.from('site_settings').insert({ key: LAST_RUN_KEY, value: stamp });
-  }
+  if (!slot) console.log('Invoked outside the expected slots; publishing anyway.');
 
   const result = await publishNextImage();
-  console.log(`weekly-plan slot ${slot}:`, result.message);
+  console.log(`weekly-plan slot ${slot ?? 'manual-cron'}:`, result.message);
   return json({ success: result.ok, slot, ...result });
 });
