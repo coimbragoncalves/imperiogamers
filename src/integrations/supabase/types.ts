@@ -527,6 +527,33 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_plan_images: {
+        Row: {
+          caption: string | null
+          created_at: string
+          id: string
+          image_url: string
+          position: number
+          storage_path: string | null
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          id?: string
+          image_url: string
+          position?: number
+          storage_path?: string | null
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          id?: string
+          image_url?: string
+          position?: number
+          storage_path?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
