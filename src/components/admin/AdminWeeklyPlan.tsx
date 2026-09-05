@@ -1,11 +1,13 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { CalendarClock, Loader2, Trash2, Upload, Send } from 'lucide-react';
+import { CalendarClock, Loader2, Trash2, Upload, Send, ArrowUp, ArrowDown, Clock, Save } from 'lucide-react';
 
 interface WeeklyPlanImage {
   id: string;
@@ -17,14 +19,17 @@ interface WeeklyPlanImage {
 }
 
 const MAX_IMAGES = 30;
-const SLOTS = ['09:30', '15:10', '19:20'];
 
 const AdminWeeklyPlan = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [publishing, setPublishing] = useState(false);
+  const [reordering, setReordering] = useState(false);
+  const [slots, setSlots] = useState<[string, string, string]>(['09:30', '15:10', '19:20']);
+  const [savingSlots, setSavingSlots] = useState(false);
 
   const { data: images = [], isLoading } = useQuery({
     queryKey: ['weekly-plan-images'],
@@ -39,7 +44,44 @@ const AdminWeeklyPlan = () => {
     },
   });
 
+  const { data: settings } = useQuery({
+    queryKey: ['weekly-plan-settings'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('weekly_plan_settings')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  useEffect(() => {
+    if (settings) setSlots([settings.slot_1, settings.slot_2, settings.slot_3]);
+  }, [settings]);
+
   const remaining = MAX_IMAGES - images.length;
+
+  const saveSlots = async () => {
+    if (slots.some((s) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(s))) {
+      toast({ title: 'Horário inválido', description: 'Use o formato HH:MM.', variant: 'destructive' });
+      return;
+    }
+    setSavingSlots(true);
+    const { error } = await supabase.rpc('set_weekly_plan_schedule', {
+      p_slot_1: slots[0],
+      p_slot_2: slots[1],
+      p_slot_3: slots[2],
+    });
+    setSavingSlots(false);
+    if (error) {
+      toast({ title: 'Erro ao salvar horários', description: error.message, variant: 'destructive' });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ['weekly-plan-settings'] });
+    toast({ title: 'Horários atualizados', description: `${slots.join(', ')} (hora de Angola)` });
+  };
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -50,8 +92,10 @@ const AdminWeeklyPlan = () => {
     }
 
     setUploading(true);
+    setProgress(0);
     let basePos = images.length > 0 ? Math.max(...images.map((i) => i.position)) + 1 : 0;
     let ok = 0;
+    let done = 0;
 
     for (const file of selected) {
       try {
@@ -73,13 +117,19 @@ const AdminWeeklyPlan = () => {
           description: err instanceof Error ? err.message : 'Erro',
           variant: 'destructive',
         });
+      } finally {
+        done++;
+        setProgress(Math.round((done / selected.length) * 100));
       }
     }
 
-    setUploading(false);
     if (fileInput.current) fileInput.current.value = '';
     queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] });
     if (ok > 0) toast({ title: `${ok} imagem(ns) adicionada(s) ao plano semanal` });
+    setTimeout(() => {
+      setUploading(false);
+      setProgress(0);
+    }, 600);
   };
 
   const saveCaption = useMutation({
@@ -92,6 +142,22 @@ const AdminWeeklyPlan = () => {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] }),
   });
+
+  const move = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= images.length) return;
+    setReordering(true);
+    const a = images[index];
+    const b = images[target];
+    const { error: e1 } = await supabase.from('weekly_plan_images').update({ position: b.position }).eq('id', a.id);
+    const { error: e2 } = await supabase.from('weekly_plan_images').update({ position: a.position }).eq('id', b.id);
+    setReordering(false);
+    if (e1 || e2) {
+      toast({ title: 'Erro ao reordenar', description: (e1 || e2)?.message, variant: 'destructive' });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] });
+  };
 
   const removeImage = useMutation({
     mutationFn: async (img: WeeklyPlanImage) => {
@@ -132,10 +198,39 @@ const AdminWeeklyPlan = () => {
       <div>
         <h1 className="text-2xl md:text-3xl font-display font-bold mb-1">Plano Semanal</h1>
         <p className="text-sm text-muted-foreground">
-          Imagens publicadas <strong>apenas na Página do Facebook</strong> (não vão para o site), 3 vezes por dia às{' '}
-          {SLOTS.join(', ')} (hora de Angola). Cada imagem publicada sai automaticamente do plano.
+          Imagens publicadas <strong>apenas na Página do Facebook</strong> (não vão para o site), 3 vezes por dia nos
+          horários definidos abaixo (hora de Angola). A publicação segue a ordem da fila e cada imagem publicada sai
+          automaticamente do plano.
         </p>
       </div>
+
+      <Card className="p-4 md:p-6 space-y-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Clock className="h-4 w-4 text-primary" />
+          Horários das publicações
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {slots.map((value, i) => (
+            <div key={i} className="space-y-1.5">
+              <Label htmlFor={`slot-${i}`}>Horário {i + 1}</Label>
+              <Input
+                id={`slot-${i}`}
+                type="time"
+                value={value}
+                onChange={(e) => {
+                  const next = [...slots] as [string, string, string];
+                  next[i] = e.target.value;
+                  setSlots(next);
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        <Button onClick={saveSlots} disabled={savingSlots}>
+          {savingSlots ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Salvar horários
+        </Button>
+      </Card>
 
       <Card className="p-4 md:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
@@ -156,6 +251,14 @@ const AdminWeeklyPlan = () => {
             </Button>
           </div>
         </div>
+
+        {uploading && (
+          <div className="space-y-1.5 animate-fade-in">
+            <Progress value={progress} />
+            <p className="text-xs text-muted-foreground text-right font-medium">{progress}%</p>
+          </div>
+        )}
+
         <input
           ref={fileInput}
           type="file"
@@ -200,15 +303,37 @@ const AdminWeeklyPlan = () => {
                     }
                   }}
                 />
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => removeImage.mutate(img)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Remover
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={reordering || index === 0}
+                    onClick={() => move(index, -1)}
+                    aria-label="Subir na ordem"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    disabled={reordering || index === images.length - 1}
+                    onClick={() => move(index, 1)}
+                    aria-label="Descer na ordem"
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => removeImage.mutate(img)}
+                    aria-label="Remover imagem"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </Card>
           ))}
