@@ -554,6 +554,33 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_plan_settings: {
+        Row: {
+          created_at: string
+          id: string
+          slot_1: string
+          slot_2: string
+          slot_3: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          slot_1?: string
+          slot_2?: string
+          slot_3?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          slot_1?: string
+          slot_2?: string
+          slot_3?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -594,6 +621,10 @@ export type Database = {
       }
       increment_views: { Args: { article_id: string }; Returns: undefined }
       is_safe_content: { Args: { content: string }; Returns: boolean }
+      set_weekly_plan_schedule: {
+        Args: { p_slot_1: string; p_slot_2: string; p_slot_3: string }
+        Returns: undefined
+      }
       update_reaction_counts: {
         Args: {
           p_article_id: string
