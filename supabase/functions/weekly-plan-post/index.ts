@@ -6,8 +6,8 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
-// Fixed daily slots (Luanda time, UTC+1 without DST)
-const SLOTS = ['09:30', '15:10', '19:20'];
+// Daily slots (Luanda time, UTC+1 without DST) — configurable by the admin.
+const DEFAULT_SLOTS = ['09:30', '15:10', '19:20'];
 const WINDOW_MINUTES = 20;
 
 function json(body: unknown, status = 200) {
@@ -17,7 +17,16 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function dueSlot(): string | null {
+async function getSlots(): Promise<string[]> {
+  const { data } = await admin
+    .from('weekly_plan_settings')
+    .select('slot_1, slot_2, slot_3')
+    .limit(1)
+    .maybeSingle();
+  return data ? [data.slot_1, data.slot_2, data.slot_3] : DEFAULT_SLOTS;
+}
+
+function dueSlot(SLOTS: string[]): string | null {
   const nowLuanda = new Date(Date.now() + 60 * 60 * 1000);
   const nowMinutes = nowLuanda.getUTCHours() * 60 + nowLuanda.getUTCMinutes();
   return (
@@ -130,7 +139,7 @@ Deno.serve(async (req) => {
   }
 
   // Scheduled invocation: three exact daily jobs (09:30, 15:10, 19:20 Luanda).
-  const slot = dueSlot();
+  const slot = dueSlot(await getSlots());
   if (!slot) console.log('Invoked outside the expected slots; publishing anyway.');
 
   const result = await publishNextImage();
