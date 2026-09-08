@@ -554,6 +554,36 @@ export type Database = {
         }
         Relationships: []
       }
+      weekly_plan_reels: {
+        Row: {
+          caption: string | null
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          position: number
+          storage_path: string | null
+          video_url: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          position?: number
+          storage_path?: string | null
+          video_url: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          position?: number
+          storage_path?: string | null
+          video_url?: string
+        }
+        Relationships: []
+      }
       weekly_plan_settings: {
         Row: {
           created_at: string
