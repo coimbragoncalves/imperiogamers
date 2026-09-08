@@ -38,6 +38,105 @@ function dueSlot(SLOTS: string[]): string | null {
   );
 }
 
+async function getConnection() {
+  let { data: connection } = await admin
+    .from('facebook_connections')
+    .select('id, page_id, access_token')
+    .eq('status', 'connected')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!connection) {
+    const legacyId = Deno.env.get('FACEBOOK_PAGE_ID');
+    const legacyToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
+    if (legacyId && legacyToken) {
+      connection = { id: '', page_id: legacyId, access_token: legacyToken };
+    }
+  }
+  return connection;
+}
+
+async function markPublished(connectionId: string, title: string) {
+  if (!connectionId) return;
+  await admin
+    .from('facebook_connections')
+    .update({
+      last_published_at: new Date().toISOString(),
+      last_published_title: title,
+      last_error: null,
+    })
+    .eq('id', connectionId);
+}
+
+function failure(err: unknown, label: string) {
+  const kind = err instanceof FacebookError ? err.kind : 'unknown';
+  const detail = err instanceof Error ? err.message : 'Erro inesperado';
+  console.error(`weekly-plan-post ${label} failed:`, kind, detail);
+  return {
+    ok: false,
+    message: `${FRIENDLY_ERROR[kind as keyof typeof FRIENDLY_ERROR] ?? 'Falha'} (${detail})`,
+  };
+}
+
+async function publishNextReel(): Promise<{ ok: boolean; message: string; post_id?: string }> {
+  const { data: reel } = await admin
+    .from('weekly_plan_reels')
+    .select('id, video_url, caption, storage_path')
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!reel) return { ok: false, message: 'Nenhum reel na fila — nada para publicar.' };
+
+  const connection = await getConnection();
+  if (!connection) return { ok: false, message: 'Nenhuma Página do Facebook conectada.' };
+
+  try {
+    // 1) Start an upload session for the reel.
+    const start = await graphFetch<{ video_id: string; upload_url: string }>(
+      `/${connection.page_id}/video_reels`,
+      { method: 'POST', body: { upload_phase: 'start', access_token: connection.access_token } },
+    );
+
+    // 2) Ask Facebook to fetch the hosted file.
+    const upload = await fetch(`https://rupload.facebook.com/video-upload/${GRAPH_VERSION}/${start.video_id}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `OAuth ${connection.access_token}`,
+        file_url: reel.video_url,
+      },
+    });
+    const uploadBody = await upload.json().catch(() => ({}));
+    if (!upload.ok || (uploadBody as { success?: boolean }).success === false) {
+      throw new FacebookError(
+        (uploadBody as { error?: { message: string } }).error ?? `Falha no upload do vídeo (HTTP ${upload.status})`,
+      );
+    }
+
+    // 3) Publish it.
+    await graphFetch(`/${connection.page_id}/video_reels`, {
+      method: 'POST',
+      query: {
+        upload_phase: 'finish',
+        video_id: start.video_id,
+        video_state: 'PUBLISHED',
+        ...(reel.caption ? { description: reel.caption } : {}),
+        access_token: connection.access_token,
+      },
+    });
+
+    await admin.from('weekly_plan_reels').delete().eq('id', reel.id);
+    if (reel.storage_path) await admin.storage.from('uploads').remove([reel.storage_path]);
+    await markPublished(connection.id, 'Plano semanal (Reel)');
+
+    return { ok: true, message: 'Reel publicado no Facebook.', post_id: start.video_id };
+  } catch (err) {
+    return failure(err, 'reel');
+  }
+}
+
 async function publishNextImage(): Promise<{ ok: boolean; message: string; post_id?: string }> {
   const { data: image } = await admin
     .from('weekly_plan_images')
@@ -48,6 +147,7 @@ async function publishNextImage(): Promise<{ ok: boolean; message: string; post_
     .maybeSingle();
 
   if (!image) return { ok: false, message: 'Plano semanal vazio — nada para publicar.' };
+
 
   let { data: connection } = await admin
     .from('facebook_connections')
