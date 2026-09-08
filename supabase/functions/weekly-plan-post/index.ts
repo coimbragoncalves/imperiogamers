@@ -148,23 +148,7 @@ async function publishNextImage(): Promise<{ ok: boolean; message: string; post_
 
   if (!image) return { ok: false, message: 'Plano semanal vazio — nada para publicar.' };
 
-
-  let { data: connection } = await admin
-    .from('facebook_connections')
-    .select('id, page_id, access_token')
-    .eq('status', 'connected')
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!connection) {
-    const legacyId = Deno.env.get('FACEBOOK_PAGE_ID');
-    const legacyToken = Deno.env.get('FACEBOOK_PAGE_ACCESS_TOKEN');
-    if (legacyId && legacyToken) {
-      connection = { id: '', page_id: legacyId, access_token: legacyToken };
-    }
-  }
-
+  const connection = await getConnection();
   if (!connection) return { ok: false, message: 'Nenhuma Página do Facebook conectada.' };
 
   try {
@@ -184,28 +168,14 @@ async function publishNextImage(): Promise<{ ok: boolean; message: string; post_
       await admin.storage.from('uploads').remove([image.storage_path]);
     }
 
-    if (connection.id) {
-      await admin
-        .from('facebook_connections')
-        .update({
-          last_published_at: new Date().toISOString(),
-          last_published_title: 'Plano semanal',
-          last_error: null,
-        })
-        .eq('id', connection.id);
-    }
+    await markPublished(connection.id, 'Plano semanal');
 
     return { ok: true, message: 'Imagem publicada no Facebook.', post_id: photo.post_id || photo.id };
   } catch (err) {
-    const kind = err instanceof FacebookError ? err.kind : 'unknown';
-    const detail = err instanceof Error ? err.message : 'Erro inesperado';
-    console.error('weekly-plan-post failed:', kind, detail);
-    return {
-      ok: false,
-      message: `${FRIENDLY_ERROR[kind as keyof typeof FRIENDLY_ERROR] ?? 'Falha'} (${detail})`,
-    };
+    return failure(err, 'image');
   }
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
