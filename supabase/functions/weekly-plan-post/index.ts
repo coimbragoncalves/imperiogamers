@@ -181,9 +181,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   let manual = false;
+  let kind = 'image';
   try {
     const body = await req.json();
     manual = body?.manual === true;
+    if (body?.kind === 'reel') kind = 'reel';
   } catch {
     // cron ping (empty body)
   }
@@ -204,7 +206,7 @@ Deno.serve(async (req) => {
       if (!role) return json({ error: 'Acesso restrito a administradores' }, 403);
     }
 
-    const result = await publishNextImage();
+    const result = kind === 'reel' ? await publishNextReel() : await publishNextImage();
     return json(result, result.ok ? 200 : 400);
   }
 
@@ -212,7 +214,9 @@ Deno.serve(async (req) => {
   const slot = dueSlot(await getSlots());
   if (!slot) console.log('Invoked outside the expected slots; publishing anyway.');
 
-  const result = await publishNextImage();
-  console.log(`weekly-plan slot ${slot ?? 'manual-cron'}:`, result.message);
-  return json({ success: result.ok, slot, ...result });
+  const image = await publishNextImage();
+  const reel = await publishNextReel();
+  console.log(`weekly-plan slot ${slot ?? 'manual-cron'}:`, image.message, '|', reel.message);
+  return json({ success: image.ok || reel.ok, slot, image, reel });
+
 });
