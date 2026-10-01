@@ -6,8 +6,9 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { CalendarClock, Loader2, Trash2, Upload, Send, ArrowUp, ArrowDown, Clock, Save } from 'lucide-react';
+import { CalendarClock, Loader2, Trash2, Upload, Send, ArrowUp, ArrowDown, Clock, Save, Image as ImageIcon, Film } from 'lucide-react';
 
 interface WeeklyPlanImage {
   id: string;
@@ -18,12 +19,41 @@ interface WeeklyPlanImage {
   created_at: string;
 }
 
+interface WeeklyPlanReel {
+  id: string;
+  video_url: string;
+  storage_path: string | null;
+  caption: string | null;
+  duration_seconds: number | null;
+  position: number;
+  created_at: string;
+}
+
 const MAX_IMAGES = 30;
+const MAX_REELS = 30;
+const MAX_REEL_SECONDS = 120;
+
+const getVideoDuration = (file: File): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Não foi possível ler o vídeo.'));
+    };
+    video.src = url;
+  });
 
 const AdminWeeklyPlan = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
+  const reelInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [publishing, setPublishing] = useState(false);
@@ -41,6 +71,19 @@ const AdminWeeklyPlan = () => {
         .order('created_at', { ascending: true });
       if (error) throw error;
       return data as WeeklyPlanImage[];
+    },
+  });
+
+  const { data: reels = [], isLoading: loadingReels } = useQuery({
+    queryKey: ['weekly-plan-reels'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('weekly_plan_reels')
+        .select('*')
+        .order('position', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return data as WeeklyPlanReel[];
     },
   });
 
@@ -62,6 +105,7 @@ const AdminWeeklyPlan = () => {
   }, [settings]);
 
   const remaining = MAX_IMAGES - images.length;
+  const remainingReels = MAX_REELS - reels.length;
 
   const saveSlots = async () => {
     if (slots.some((s) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(s))) {
@@ -132,6 +176,61 @@ const AdminWeeklyPlan = () => {
     }, 600);
   };
 
+  const handleReelUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const selected = Array.from(files).slice(0, Math.max(remainingReels, 0));
+    if (selected.length === 0) {
+      toast({ title: 'Limite atingido', description: `O plano semanal aceita até ${MAX_REELS} reels.`, variant: 'destructive' });
+      return;
+    }
+
+    setUploading(true);
+    setProgress(0);
+    let basePos = reels.length > 0 ? Math.max(...reels.map((r) => r.position)) + 1 : 0;
+    let ok = 0;
+    let done = 0;
+
+    for (const file of selected) {
+      try {
+        if (!file.type.startsWith('video/')) throw new Error(`${file.name}: envie apenas vídeos.`);
+        const duration = await getVideoDuration(file);
+        if (duration > MAX_REEL_SECONDS) {
+          throw new Error(`${file.name}: o vídeo tem ${Math.round(duration)}s — o máximo é ${MAX_REEL_SECONDS}s (2 min).`);
+        }
+        const ext = file.name.split('.').pop() || 'mp4';
+        const path = `weekly-plan-reels/${crypto.randomUUID()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('uploads').upload(path, file);
+        if (upErr) throw upErr;
+        const { data: pub } = supabase.storage.from('uploads').getPublicUrl(path);
+        const { error: insErr } = await supabase.from('weekly_plan_reels').insert({
+          video_url: pub.publicUrl,
+          storage_path: path,
+          duration_seconds: Math.round(duration),
+          position: basePos++,
+        });
+        if (insErr) throw insErr;
+        ok++;
+      } catch (err) {
+        toast({
+          title: 'Falha no upload',
+          description: err instanceof Error ? err.message : 'Erro',
+          variant: 'destructive',
+        });
+      } finally {
+        done++;
+        setProgress(Math.round((done / selected.length) * 100));
+      }
+    }
+
+    if (reelInput.current) reelInput.current.value = '';
+    queryClient.invalidateQueries({ queryKey: ['weekly-plan-reels'] });
+    if (ok > 0) toast({ title: `${ok} reel(s) adicionado(s) ao plano semanal` });
+    setTimeout(() => {
+      setUploading(false);
+      setProgress(0);
+    }, 600);
+  };
+
   const saveCaption = useMutation({
     mutationFn: async ({ id, caption }: { id: string; caption: string }) => {
       const { error } = await supabase
@@ -141,6 +240,17 @@ const AdminWeeklyPlan = () => {
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] }),
+  });
+
+  const saveReelCaption = useMutation({
+    mutationFn: async ({ id, caption }: { id: string; caption: string }) => {
+      const { error } = await supabase
+        .from('weekly_plan_reels')
+        .update({ caption: caption || null })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['weekly-plan-reels'] }),
   });
 
   const move = async (index: number, direction: -1 | 1) => {
@@ -159,6 +269,22 @@ const AdminWeeklyPlan = () => {
     queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] });
   };
 
+  const moveReel = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= reels.length) return;
+    setReordering(true);
+    const a = reels[index];
+    const b = reels[target];
+    const { error: e1 } = await supabase.from('weekly_plan_reels').update({ position: b.position }).eq('id', a.id);
+    const { error: e2 } = await supabase.from('weekly_plan_reels').update({ position: a.position }).eq('id', b.id);
+    setReordering(false);
+    if (e1 || e2) {
+      toast({ title: 'Erro ao reordenar', description: (e1 || e2)?.message, variant: 'destructive' });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ['weekly-plan-reels'] });
+  };
+
   const removeImage = useMutation({
     mutationFn: async (img: WeeklyPlanImage) => {
       const { error } = await supabase.from('weekly_plan_images').delete().eq('id', img.id);
@@ -172,10 +298,25 @@ const AdminWeeklyPlan = () => {
     onError: (e) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
   });
 
-  const publishNow = async () => {
+  const removeReel = useMutation({
+    mutationFn: async (reel: WeeklyPlanReel) => {
+      const { error } = await supabase.from('weekly_plan_reels').delete().eq('id', reel.id);
+      if (error) throw error;
+      if (reel.storage_path) await supabase.storage.from('uploads').remove([reel.storage_path]);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['weekly-plan-reels'] });
+      toast({ title: 'Reel removido' });
+    },
+    onError: (e) => toast({ title: 'Erro', description: e.message, variant: 'destructive' }),
+  });
+
+  const publishNow = async (kind: 'image' | 'reel' = 'image') => {
     setPublishing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('weekly-plan-post', { body: { manual: true } });
+      const { data, error } = await supabase.functions.invoke('weekly-plan-post', {
+        body: kind === 'reel' ? { manual: true, kind: 'reel' } : { manual: true },
+      });
       const message = (data as { message?: string; error?: string } | null)?.message
         || (data as { error?: string } | null)?.error
         || error?.message;
@@ -186,6 +327,7 @@ const AdminWeeklyPlan = () => {
         variant: (data as { ok?: boolean } | null)?.ok ? 'default' : 'destructive',
       });
       queryClient.invalidateQueries({ queryKey: ['weekly-plan-images'] });
+      queryClient.invalidateQueries({ queryKey: ['weekly-plan-reels'] });
     } catch (err) {
       toast({ title: 'Erro', description: err instanceof Error ? err.message : 'Erro', variant: 'destructive' });
     } finally {
@@ -198,9 +340,9 @@ const AdminWeeklyPlan = () => {
       <div>
         <h1 className="text-2xl md:text-3xl font-display font-bold mb-1">Plano Semanal</h1>
         <p className="text-sm text-muted-foreground">
-          Imagens publicadas <strong>apenas na Página do Facebook</strong> (não vão para o site), 3 vezes por dia nos
-          horários definidos abaixo (hora de Angola). A publicação segue a ordem da fila e cada imagem publicada sai
-          automaticamente do plano.
+          Imagens e reels publicados <strong>apenas na Página do Facebook</strong> (não vão para o site), 3 vezes por
+          dia nos horários definidos abaixo (hora de Angola). A publicação segue a ordem da fila e cada item publicado
+          sai automaticamente do plano.
         </p>
       </div>
 
@@ -232,113 +374,242 @@ const AdminWeeklyPlan = () => {
         </Button>
       </Card>
 
-      <Card className="p-4 md:p-6 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div className="flex items-center gap-2 text-sm">
-            <CalendarClock className="h-4 w-4 text-primary" />
-            <span>
-              {images.length}/{MAX_IMAGES} imagens na fila
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={() => fileInput.current?.click()} disabled={uploading || remaining <= 0}>
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Enviar imagens
-            </Button>
-            <Button variant="outline" onClick={publishNow} disabled={publishing || images.length === 0}>
-              {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Publicar agora
-            </Button>
-          </div>
-        </div>
+      <Tabs defaultValue="images" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="images" className="gap-2">
+            <ImageIcon className="h-4 w-4" />
+            Imagens ({images.length})
+          </TabsTrigger>
+          <TabsTrigger value="reels" className="gap-2">
+            <Film className="h-4 w-4" />
+            Reels ({reels.length})
+          </TabsTrigger>
+        </TabsList>
 
-        {uploading && (
-          <div className="space-y-1.5 animate-fade-in">
-            <Progress value={progress} />
-            <p className="text-xs text-muted-foreground text-right font-medium">{progress}%</p>
-          </div>
-        )}
-
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => handleUpload(e.target.files)}
-        />
-      </Card>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : images.length === 0 ? (
-        <Card className="p-8 text-center text-muted-foreground">
-          Nenhuma imagem no plano semanal. Envie até {MAX_IMAGES} imagens para começar.
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {images.map((img, index) => (
-            <Card key={img.id} className="overflow-hidden">
-              <div className="relative aspect-video bg-muted">
-                <img
-                  src={img.image_url}
-                  alt={img.caption || `Plano semanal ${index + 1}`}
-                  loading="lazy"
-                  decoding="async"
-                  className="w-full h-full object-cover"
-                />
-                <span className="absolute top-2 left-2 rounded bg-background/90 px-2 py-0.5 text-xs font-medium">
-                  #{index + 1}
+        <TabsContent value="images" className="space-y-4">
+          <Card className="p-4 md:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <CalendarClock className="h-4 w-4 text-primary" />
+                <span>
+                  {images.length}/{MAX_IMAGES} imagens na fila
                 </span>
               </div>
-              <div className="p-3 space-y-2">
-                <Input
-                  defaultValue={img.caption || ''}
-                  placeholder="Legenda (opcional)"
-                  onBlur={(e) => {
-                    if ((img.caption || '') !== e.target.value) {
-                      saveCaption.mutate({ id: img.id, caption: e.target.value });
-                    }
-                  }}
-                />
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    disabled={reordering || index === 0}
-                    onClick={() => move(index, -1)}
-                    aria-label="Subir na ordem"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    disabled={reordering || index === images.length - 1}
-                    onClick={() => move(index, 1)}
-                    aria-label="Descer na ordem"
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => removeImage.mutate(img)}
-                    aria-label="Remover imagem"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+              <div className="flex gap-2">
+                <Button onClick={() => fileInput.current?.click()} disabled={uploading || remaining <= 0}>
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Enviar imagens
+                </Button>
+                <Button variant="outline" onClick={() => publishNow('image')} disabled={publishing || images.length === 0}>
+                  {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Publicar agora
+                </Button>
               </div>
+            </div>
+
+            {uploading && (
+              <div className="space-y-1.5 animate-fade-in">
+                <Progress value={progress} />
+                <p className="text-xs text-muted-foreground text-right font-medium">{progress}%</p>
+              </div>
+            )}
+
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => handleUpload(e.target.files)}
+            />
+          </Card>
+
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : images.length === 0 ? (
+            <Card className="p-8 text-center text-muted-foreground">
+              Nenhuma imagem no plano semanal. Envie até {MAX_IMAGES} imagens para começar.
             </Card>
-          ))}
-        </div>
-      )}
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {images.map((img, index) => (
+                <Card key={img.id} className="overflow-hidden">
+                  <div className="relative aspect-video bg-muted">
+                    <img
+                      src={img.image_url}
+                      alt={img.caption || `Plano semanal ${index + 1}`}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-2 left-2 rounded bg-background/90 px-2 py-0.5 text-xs font-medium">
+                      #{index + 1}
+                    </span>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    <Input
+                      defaultValue={img.caption || ''}
+                      placeholder="Legenda (opcional)"
+                      onBlur={(e) => {
+                        if ((img.caption || '') !== e.target.value) {
+                          saveCaption.mutate({ id: img.id, caption: e.target.value });
+                        }
+                      }}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        disabled={reordering || index === 0}
+                        onClick={() => move(index, -1)}
+                        aria-label="Subir na ordem"
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        disabled={reordering || index === images.length - 1}
+                        onClick={() => move(index, 1)}
+                        aria-label="Descer na ordem"
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => removeImage.mutate(img)}
+                        aria-label="Remover imagem"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="reels" className="space-y-4">
+          <Card className="p-4 md:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <Film className="h-4 w-4 text-primary" />
+                <span>
+                  {reels.length}/{MAX_REELS} reels na fila (vídeos de até 2 minutos)
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => reelInput.current?.click()} disabled={uploading || remainingReels <= 0}>
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Enviar reels
+                </Button>
+                <Button variant="outline" onClick={() => publishNow('reel')} disabled={publishing || reels.length === 0}>
+                  {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Publicar agora
+                </Button>
+              </div>
+            </div>
+
+            {uploading && (
+              <div className="space-y-1.5 animate-fade-in">
+                <Progress value={progress} />
+                <p className="text-xs text-muted-foreground text-right font-medium">{progress}%</p>
+              </div>
+            )}
+
+            <input
+              ref={reelInput}
+              type="file"
+              accept="video/*"
+              multiple
+              className="hidden"
+              onChange={(e) => handleReelUpload(e.target.files)}
+            />
+          </Card>
+
+          {loadingReels ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : reels.length === 0 ? (
+            <Card className="p-8 text-center text-muted-foreground">
+              Nenhum reel no plano semanal. Envie vídeos curtos de até 2 minutos para começar.
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {reels.map((reel, index) => (
+                <Card key={reel.id} className="overflow-hidden">
+                  <div className="relative aspect-video bg-muted">
+                    <video
+                      src={reel.video_url}
+                      controls
+                      preload="metadata"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute top-2 left-2 rounded bg-background/90 px-2 py-0.5 text-xs font-medium">
+                      #{index + 1}
+                    </span>
+                    {reel.duration_seconds != null && (
+                      <span className="absolute top-2 right-2 rounded bg-background/90 px-2 py-0.5 text-xs font-medium">
+                        {Math.floor(reel.duration_seconds / 60)}:{String(reel.duration_seconds % 60).padStart(2, '0')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="p-3 space-y-2">
+                    <Input
+                      defaultValue={reel.caption || ''}
+                      placeholder="Legenda (opcional)"
+                      onBlur={(e) => {
+                        if ((reel.caption || '') !== e.target.value) {
+                          saveReelCaption.mutate({ id: reel.id, caption: e.target.value });
+                        }
+                      }}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        disabled={reordering || index === 0}
+                        onClick={() => moveReel(index, -1)}
+                        aria-label="Subir na ordem"
+                      >
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        disabled={reordering || index === reels.length - 1}
+                        onClick={() => moveReel(index, 1)}
+                        aria-label="Descer na ordem"
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => removeReel.mutate(reel)}
+                        aria-label="Remover reel"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
