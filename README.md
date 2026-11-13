@@ -11,8 +11,7 @@ com painel administrativo integrado.
 ## 🔐 Credenciais de Administrador
 
 **Email:** Coimbragoncalves1@gmail.com  
-**Senha:** M@sterchief25
-
+**Senha:**0000000000
 O administrador já está pré-configurado no sistema e não precisa confirmar email.
 
 ## 📋 Funcionalidades Principais
